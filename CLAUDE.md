@@ -3069,11 +3069,11 @@ History: #112.
 
 Agreed with the owner on 2026-10-30, **the fast path**: no dual backend and no
 week-long soak — the code moves in one step on `feature/postgres`, is checked on a
-copy of production and on the dev server, then both servers switch; production
-runs on SQLite until the switch, its downtime the data import alone. PostgreSQL 16
-runs on the VPS (localhost). Until the switch, the servers and the deploy script
-run as they do; what is left is in #234. The new bot (#238) and `unlocked.how` (#237)
-switch after it.
+copy of production and on the dev server, then both servers switch. **Both are on
+PostgreSQL 16 (the VPS, localhost): the test server since 2026-10-31, production
+since 2026-10-31 15:31 UTC, as 0.3.0.** What is left is the clean-up in #234, after
+the rollback window (until 2026-11-02 15:31 UTC). `unlocked.how` (#237) and the
+rest of the new bot's move (#238) come after it.
 
 **Scripts open PostgreSQL through `bot/db/tools.py`** (the bot's dialect and rows,
 no bring-up): `--schema` in place of `--db`, default `DATABASE_SCHEMA`; an async
@@ -3174,10 +3174,10 @@ journalctl -u xbox-bot -f
 
 | | prod | test server |
 |---|---|---|
-| bot | `@xbox_achievement_bot` | `@tg_achievement_bot` |
+| bot | `@unlocked_project_bot` | `@tg_achievement_bot` |
 | unit / port | `xbox-bot` · 8080 | `xbox-bot-test` · 8081 |
 | checkout | `/opt/xbox_achievement_bot` | `/opt/xbox_bot_test` |
-| env / database | `.env` · `data/bot.db` | `.env.test` · `data/test.db` |
+| env / schema | `.env` · `prod` | `.env.test` · `test` |
 | branch | `main` | `prerelease` |
 | Mini App | `xbox.sultanpharm.com/app/` | `test.xbox.sultanpharm.com/app/` |
 | SPA files | `/var/www/xbox-mini` | `/var/www/xbox-mini-test` |
