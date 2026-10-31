@@ -71,7 +71,12 @@ export type GameHltb = {
   multi?: boolean;
 };
 
+/** What a short link can name (#244). */
+export type ShareKind = "game" | "achievement" | "dlc" | "news" | "person";
+
 export type GameDlc = {
+  /** The rows it stands for, one a console. */
+  ids: number[];
   name: string;
   image: string | null;
   release_date: string | null;

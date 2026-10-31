@@ -2,12 +2,12 @@ import { clubApi, type NewsItem } from "../../api";
 import { gameArtOf, useArtTheme } from "../../app/artTheme";
 import { useApp } from "../../app/context";
 import { KindChip } from "../../parts/KindChip";
-import { newsShareLink, openExternal, shareLink } from "../../app/env";
-import { tick } from "../../core/haptic";
+import { openExternal } from "../../app/env";
+import { ShareButton } from "../../parts/ShareButton";
 import { useLoad } from "../../app/useLoad";
 import { GameLink } from "../../parts/GameLink";
 import { whenLabel } from "../../i18n";
-import { Button, Empty, IconButton } from "../../ui/Controls";
+import { Button, Empty } from "../../ui/Controls";
 import { Page } from "../../ui/Page";
 import { Cover } from "../../ui/Pic";
 import { Hero } from "../../ui/Hero";
@@ -35,7 +35,7 @@ export function NewsPostPage({
   onClose: () => void;
   layer: string;
 }) {
-  const { data, tr, locale, open, toast } = useApp();
+  const { data, tr, locale, open } = useApp();
   const fetched = useLoad(item ? null : `post:${appid}:${gid}`, () =>
     clubApi.fetchNewsPost(data, appid, gid, game ? { platform: game.platform, title_id: game.title_id } : undefined),
   );
@@ -68,16 +68,7 @@ export function NewsPostPage({
       style={theme.style}
       actions={
         post ? (
-          <IconButton
-            icon="share"
-            label={tr("share")}
-            variant="glass"
-            onClick={() => {
-              tick();
-              const link = newsShareLink(appid, gid, ref?.platform && ref.title_id ? ref : null);
-              void shareLink(link).then((how) => how === "copied" && toast(tr("linkCopied")));
-            }}
-          />
+          <ShareButton kind="news" target={`${appid}:${gid}`} />
         ) : null
       }
     >

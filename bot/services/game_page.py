@@ -390,6 +390,7 @@ def dlcs_of(dlcs: list[dict[str, Any]], game: str) -> list[dict[str, Any]]:
         card = cards.get(key)
         if card is None:
             card = cards[key] = {
+                "ids": [],
                 "name": name,
                 "image": https(dlc.get("image_url")),
                 "release_date": dlc.get("release_date"),
@@ -400,6 +401,8 @@ def dlcs_of(dlcs: list[dict[str, Any]], game: str) -> list[dict[str, Any]]:
                 "stores": [],
                 "hltb": hltb_of(dlc) if dlc.get("hltb_id") else None,
             }
+        if dlc.get("dlc_id") is not None:
+            card["ids"].append(dlc["dlc_id"])
         card["image"] = card["image"] or https(dlc.get("image_url"))
         if dlc.get("release_date") and (
             not card["release_date"] or dlc["release_date"] < card["release_date"]

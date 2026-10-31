@@ -197,6 +197,7 @@ name, or when the tree goes stale.
 │   │   ├── notify.py             notifications to the admin
 │   │   ├── email.py              sending mail: one `EmailSender`, SMTP or (dev) the log (#162)
 │   │   ├── email_login.py        sign-in codes by email: rules, rationing, checking (#162)
+│   │   ├── short_links.py        what a short link looks like: slug, code, kinds (#244)
 │   │   ├── invites.py            invite codes: their form, and sign-ups waiting for one
 │   │   ├── passkeys.py           passkeys: options, challenges, checking (py_webauthn)
 │   │   ├── notifier.py           the app's own notifications: list, push, Telegram DM (#164)
@@ -268,7 +269,7 @@ name, or when the tree goes stale.
 │                            mini_invites.py (signing up with an invite, a member's codes),
 │                            mini_passkeys.py (adding, listing, signing in with passkeys),
 │                            mini_pass.py (the season pass: its state, claiming a theme),
-│                            mini_share.py (a shared post's page with its card's tags)
+│                            mini_share.py (short links: public pages with a card's tags)
 │   │
 │   └── db/
 │       ├── postgres.py           psycopg 3 behind aiosqlite's face: placeholders, rows, autocommit,
@@ -2963,9 +2964,28 @@ sent to a chat.
   the post's Open Graph tags (the game and the title, the start of the text,
   the post's picture or its game's art) that sends a person on to the post in
   the app. Inside Telegram the share opens its chat picker, elsewhere the
-  system's share sheet, else the link is copied. It sits under `/api/mini/`,
-  which nginx already proxies on each host. Outside Telegram the app asks to
-  sign in first.
+  system's share sheet, else the link is copied. Outside Telegram the app asks
+  to sign in first. That address still answers; the app now gives short links.
+- **Short links** (owner, 2026-10-31; #244; `services/short_links.py`,
+  `web/mini_share.py`, `db/repo/_short_links.py`, migration 149):
+  `/g/hades-ii-k3F9xQ`, a slug of the name for reading and a random code that
+  alone finds the target, so a rename breaks nothing and links cannot be walked
+  in order. A name in another alphabet has no slug: the code alone. Prefixes:
+  `g` game, `a` achievement, `d` DLC, `n` news post (each opens its own page);
+  `s` series, `v` version, `e` edition, `h` HLTB entry, `l` achievement list
+  (no screen of their own: each opens its game). `short_links` is in the shared
+  catalog and **a target is a key that outlives a rebuild** (a store product, a
+  list, a store's id), never a version's or a game's id. `POST /api/mini/link`
+  makes a link, signed in, and only for a thing that exists. The page's
+  «Поделиться» uses it on a game, an achievement, a DLC, a post and a person;
+  the kinds with no screen have no button yet. **The card is public, so it shows
+  only what is**: a secret achievement shows its game alone, and its name stays
+  out of the address. **A profile is `/u/Name` or `/u/Name-4821`**, by nickname,
+  so a new nickname breaks the old link: its card is the nickname and the face
+  (no activity, #157), the face served at `/u/Name/face` for a crawler, by
+  nickname so it cannot be walked by id. Prod's nginx sends these paths to the
+  bot by its `location /`; the test server's needs the rule in
+  `deploy/nginx/unlocked.conf`, the dev server's Vite proxies them.
 - **An achievement has a page of its own** (owner, 2026-10-05): opened from its
   row in a list (a secret one revealed first), a post in the Feed, Home's
   gallery and the Ranking's lists (owner, 2026-10-09;

@@ -1,11 +1,16 @@
 import { BaseApi } from "../base/baseApi";
 import { API_BASE_ROUTES } from "../../core/constants/routes";
-import type { GameCard, GamePage } from "./gameApiModels";
+import type { GameCard, GamePage, ShareKind } from "./gameApiModels";
 
 /** The game page, the games search and favorite games (#147, stage 5). */
 export class GameApi extends BaseApi {
   constructor(baseUrl: string = API_BASE_ROUTES.MINI) {
     super(baseUrl);
+  }
+
+  /** The short link to share of a thing the app shows (#244). */
+  makeLink(initData: string, kind: ShareKind, ref: string): Promise<{ url: string }> {
+    return this.post(initData, "/link", { kind, ref });
   }
 
   /** A game whole: by its id, or by one of its achievement lists. */

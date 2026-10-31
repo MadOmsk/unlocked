@@ -363,6 +363,14 @@ list of settings or actions of its own.
 - Everything that opens outside (stores, Steam, YouTube, HLTB) opens through
   Telegram's link opener inside Telegram, a new tab elsewhere.
 
+## Sharing
+
+A game, an achievement, a DLC, a news post and a person's page each have a way to
+share: a short link that a messenger draws as a card, and that opens the thing in
+the app. Anyone may see the card without signing in, so it shows only what is
+public: a secret achievement shows its game alone, a person only a nickname and a
+face.
+
 ## Data and API
 
 - The client: `webapp/src/api` — one module per area with typed models

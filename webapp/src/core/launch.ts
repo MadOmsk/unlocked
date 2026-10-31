@@ -91,7 +91,7 @@ export function launchContext(): {
   // link to a game was silently broken). See bot/services/mini_app.py's
   // `_encode_game`, which this must stay in sync with.
   const parsed = /^c(-?\d+)(?:([pu])(\d+))?(?:t([a-z]+))?(?:g([A-Za-z0-9_-]+))?$/.exec(start);
-  const linked = Boolean(start) || ["c", "p", "u", "t", "g", "n"].some((key) => q.has(key));
+  const linked = Boolean(start) || ["c", "p", "u", "t", "g", "n", "game"].some((key) => q.has(key));
   const newsMatch = /^(\d+):(.+)$/.exec(q.get("n") ?? "");
   const place = linked ? null : savedPlace();
   if (parsed) {
@@ -143,6 +143,18 @@ export function launchContext(): {
               : null,
         }
       : null;
+  // A short link names the game itself, and a DLC of it (#244).
+  const linkedGame = Number(q.get("game")) || null;
+  if (linkedGame) {
+    return {
+      chatId: null,
+      personId: null,
+      legacyTgId: null,
+      tab: asLaunchTab(tab),
+      news: null,
+      game: { game_id: linkedGame, dlc_id: Number(q.get("dlc")) || undefined, platform: "", title_id: "" },
+    };
+  }
   return {
     chatId: chatId ? Number(chatId) : null,
     personId: personNum,

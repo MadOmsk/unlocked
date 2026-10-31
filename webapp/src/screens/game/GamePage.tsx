@@ -15,6 +15,7 @@ import type { NewsItem } from "../../api";
 import { Button, Chip, Empty, Section } from "../../ui/Controls";
 import { Face } from "../../ui/Face";
 import { Icon } from "../../ui/Icon";
+import { ShareButton } from "../../parts/ShareButton";
 import { BarAction, Page } from "../../ui/Page";
 import { MediaTile } from "./MediaTile";
 import { DlcRow } from "./DlcPage";
@@ -94,7 +95,7 @@ export function GamePage({ gameRef, onClose, layer }: { gameRef: GameRef; onClos
       ) : null}
       {g && ready && (
         <div className="gp-body">
-          <GameBody g={g} setPage={page.set} open={open} />
+          <GameBody g={g} setPage={page.set} open={open} dlcId={gameRef.dlc_id} />
         </div>
       )}
     </Page>
@@ -153,10 +154,12 @@ function GameBody({
   g,
   setPage,
   open,
+  dlcId,
 }: {
   g: GamePageData;
   setPage: (p: GamePageData) => void;
   open: ReturnType<typeof useApp>["open"];
+  dlcId?: number;
 }) {
   const { data, tr, locale, me, toast } = useApp();
   const [story, setStory] = useState(false);
@@ -192,6 +195,12 @@ function GameBody({
   const editions = [...g.editions].sort((a, b) => a.name.length - b.name.length);
   // What an add-on's name opens with and is no part of its own: the game's names.
   const gameNames = [g.game.name, g.game.name_ru, ...g.lists.map((l) => l.name)];
+  // A short link to a DLC opens its page over the game's, once.
+  useEffect(() => {
+    const dlc = dlcId ? g.dlcs.find((d) => d.ids.includes(dlcId)) : null;
+    if (dlc) open({ kind: "dlc", game: g.game.name, gameNames, cover: g.art.poster ?? null, dlc });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dlcId]);
 
   const openList = (personId?: number, personName?: string) => {
     if (!list) return;
@@ -247,6 +256,9 @@ function GameBody({
   return (
     <>
       <BarAction>{heart}</BarAction>
+      <BarAction>
+        <ShareButton kind="game" target={String(g.game.game_id)} />
+      </BarAction>
       <div className="gp-head">
         <Cover src={g.art.poster} className="gp-poster" />
         <div className="gp-titles">

@@ -452,7 +452,7 @@ def test_the_bot_comes_up_on_what_was_imported(tmp_path: Path, dsn: str) -> None
         finally:
             await database.close()
 
-    assert tools.run(bring_up()) == 150
+    assert tools.run(bring_up()) == 151
 
 
 @pytest.mark.parametrize(

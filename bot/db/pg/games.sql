@@ -715,3 +715,13 @@ BEGIN
                    r.tbl, r.conname);
   END LOOP;
 END $$;
+
+-- Short links (#244): a code for each thing of the catalog shared. A target is
+-- a key that outlives a rebuild of the catalog, never a version's or a game's id.
+CREATE TABLE short_links (
+    code       TEXT PRIMARY KEY,
+    kind       TEXT NOT NULL,
+    target     TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    UNIQUE (kind, target)
+);

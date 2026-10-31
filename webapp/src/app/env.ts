@@ -25,16 +25,6 @@ export function openExternal(url: string): void {
   window.open(url, "_blank", "noopener,noreferrer");
 }
 
-/** A post's link to share: the server's page carrying its card for a
- * messenger (`bot/web/mini_share.py`), which sends a person on to the post
- * in the app. */
-export function newsShareLink(appid: number, gid: string, game: { platform: string; title_id: string } | null): string {
-  const url = new URL(`/api/mini/share/news/${appid}/${encodeURIComponent(gid)}`, window.location.origin);
-  if (game) url.searchParams.set("g", `${game.platform}:${game.title_id}`);
-  url.searchParams.set("b", import.meta.env.BASE_URL);
-  return url.toString();
-}
-
 /** Share a link (owner, 2026-10-30) — the link alone: a messenger draws its
  * card from the page. Inside Telegram its own chat picker, elsewhere the
  * system's share sheet; with neither, the link is copied — "copied" says the

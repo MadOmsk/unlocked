@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { adminApi, clubApi, gameApi } from "../../api";
 import type { Role } from "../../api/admin/adminApi";
 import { peopleApi, type PersonProfile, type Relation } from "../../api/people/peopleApi";
+import { ShareButton } from "../../parts/ShareButton";
 import { useApp } from "../../app/context";
 import { useArtTheme } from "../../app/artTheme";
 import { AccountChip } from "../../parts/AccountCard";
@@ -116,12 +117,15 @@ export function PersonPage({ personId, onClose, layer }: { personId: number; onC
       // The page takes its colours from the face, as a game's from its art.
       style={faceArt.style}
       actions={
-        self ? (
+        <>
+          <ShareButton kind="person" target={String(personId)} variant="plain" />
+          {self ? (
           <IconButton icon="settings" label={tr("settings")} variant="plain" onClick={() => open({ kind: "settings", pane: "profile" })} />
         ) : me.role === "superadmin" ? (
           // The super-admin's own menu on another person: their role.
           <IconButton icon="more" label={tr("roleTitle")} variant="plain" onClick={() => setRoling(true)} />
-        ) : null
+          ) : null}
+        </>
       }
     >
       {/* Headed as a game is (owner, 2026-10-29): a picture across the top —

@@ -143,6 +143,7 @@ from bot.db.repo._polling import _PollingRepo
 from bot.db.repo._psn_tokens import PsnTokenRow, _PsnTokensRepo
 from bot.db.repo._series import _SeriesRepo
 from bot.db.repo._sessions import _SessionsRepo
+from bot.db.repo._short_links import _ShortLinksRepo
 from bot.db.repo._stats import _StatsRepo
 from bot.db.repo._steam import GameNewsRow, StoredPatch, TitleSteam, _SteamRepo
 from bot.db.repo._stores import _StoresRepo
@@ -243,6 +244,7 @@ class Repo(
     _HltbReadRepo,
     _GamesRepo,
     _GamePageRepo,
+    _ShortLinksRepo,
     _SeriesRepo,
     _PassRepo,
     _PsnTokensRepo,

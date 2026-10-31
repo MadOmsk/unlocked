@@ -10,6 +10,7 @@ import { tick } from "../../core/haptic";
 import { pct, whenLabel } from "../../i18n";
 import { isWideArt } from "../../parts/AchRow";
 import { GameLink } from "../../parts/GameLink";
+import { ShareButton } from "../../parts/ShareButton";
 import { capital } from "../../parts/Months";
 import { Button } from "../../ui/Controls";
 import { Face } from "../../ui/Face";
@@ -56,7 +57,7 @@ export function AchievementPage({ ach, onClose, layer }: { ach: AchView; onClose
   const theme = useArtTheme(gameArtOf(ach.gameId ? `g${ach.gameId}` : null, `${ach.platform}:${ach.titleId}`, ach.game) ?? ach.gameIcon);
 
   return (
-    <Page title={ach.game ?? tr("pageAchievement")} onBack={onClose} hero layer={layer} className="ach-page" style={theme.style}>
+    <Page title={ach.game ?? tr("pageAchievement")} onBack={onClose} hero layer={layer} className="ach-page" style={theme.style} actions={<ShareButton kind="achievement" target={`${ach.platform}:${ach.titleId}:${ach.achievementId}`} />}>
       <div className="ap-head">
         <Hero full={isWideArt(ach.platform)} ground={veiled ? null : ach.icon} onOpen={!veiled && ach.icon ? () => openImage(ach.icon!) : undefined}>
           <AchPic src={ach.icon} veiled={veiled} className={isWideArt(ach.platform) ? "hero-ach" : "hero-ach hero-ach-sq"} />

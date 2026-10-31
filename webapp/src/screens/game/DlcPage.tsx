@@ -11,6 +11,7 @@ import { consoleLabel } from "../../parts/platforms";
 import { RichText } from "../../ui/RichText";
 import { openImage } from "../../ui/Viewer";
 import { Hero } from "../../ui/Hero";
+import { ShareButton } from "../../parts/ShareButton";
 import { Page } from "../../ui/Page";
 import { Cover } from "../../ui/Pic";
 import { addonName, cleanName } from "./names";
@@ -131,7 +132,7 @@ export function DlcDetailPage({
   const picture = dlc.image ?? cover;
   const stores = (dlc.stores ?? []).filter((s) => s.url);
   return (
-    <Page title={game} onBack={onClose} hero layer={layer} style={theme.style}>
+    <Page title={game} onBack={onClose} hero layer={layer} style={theme.style} actions={dlc.ids[0] ? <ShareButton kind="dlc" target={String(dlc.ids[0])} /> : null}>
       <article className="np-article">
         <Hero full={Boolean(dlc.image)} ground={picture} onOpen={picture ? () => openImage(picture) : undefined}>
           {dlc.image ? <img src={dlc.image} alt="" className="hero-pic" /> : <Cover src={cover} className="hero-cover" />}

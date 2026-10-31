@@ -1,6 +1,8 @@
 export type GameRef = {
   /** The game itself (a search hit, a series): a ref with only this opens it. */
   game_id?: number;
+  /** A short link to a DLC: its page opens over the game's (#244). */
+  dlc_id?: number;
   platform: string;
   title_id: string;
   name?: string | null;
