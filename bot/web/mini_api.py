@@ -32,6 +32,7 @@ from bot.services import (
     custom_avatars,
     game_art,
     game_page,
+    relink,
     roles,
     time_zones,
 )
@@ -74,6 +75,7 @@ from bot.web import (
     mini_people,
     mini_psn_token,
     mini_session,
+    mini_steam,
 )
 from bot.web.mini_admin import setup_admin_routes
 from bot.web.mini_auth import InitDataError, MiniAppUser, validate_init_data_any
@@ -192,6 +194,7 @@ def setup_mini_api(
     app.router.add_post("/api/mini/connect/psn", handle_connect_psn)
     app.router.add_post("/api/mini/disconnect/psn", handle_disconnect_psn)
     mini_psn_token.setup(app)
+    mini_steam.setup(app)
     app.router.add_post("/api/mini/sync", handle_sync)
     app.router.add_patch("/api/mini/accounts/{platform}", handle_patch_account)
     app.router.add_get("/api/mini/chats", handle_chats)
@@ -460,6 +463,14 @@ async def handle_connect_steam(request: web.Request) -> web.Response:
             status=400,
         )
 
+    # Somebody else's account moves only to whoever proves it is theirs (#169).
+    if await relink.held_by_other(repo, user.person_id, Platform.STEAM, profile.steam_id):
+        proof = steam_auth.proof
+        return web.json_response(
+            {"ok": False, "error": "taken", "proof": proof is not None and proof.available},
+            status=409,
+        )
+
     await repo.link_platform_account(
         user.person_id, Platform.STEAM, profile.steam_id, profile.persona_name
     )
@@ -542,6 +553,10 @@ async def handle_connect_psn(request: web.Request) -> web.Response:
             },
             status=400,
         )
+
+    # A nickname proves nothing; the account's own token does (`link_by_token`).
+    if await relink.held_by_other(repo, user.person_id, Platform.PSN, profile.account_id):
+        return web.json_response({"ok": False, "error": "taken"}, status=409)
 
     await repo.link_platform_account(
         user.person_id, Platform.PSN, profile.account_id, profile.online_id

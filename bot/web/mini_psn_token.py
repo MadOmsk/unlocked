@@ -15,6 +15,7 @@ from aiohttp import web
 from bot.constants import MAX_PSN_ACCOUNTS, Platform
 from bot.db.repo import Repo
 from bot.poller.psn_fetcher import PsnFetcher
+from bot.services import relink
 from bot.services.psn.auth import STATUS_NOT_CONFIGURED, PsnAuth
 from bot.services.psn.personal import PsnPersonalAuth, PsnTokenError
 from bot.web.mini_auth import MiniAppUser
@@ -112,8 +113,9 @@ async def link_by_token(request: web.Request, user: MiniAppUser, raw: str) -> we
             status=400,
         )
 
-    await repo.link_platform_account(
-        user.person_id, Platform.PSN, profile.account_id, profile.online_id
+    # The token proves the account is this person's, whoever holds it (#169).
+    await relink.link_person(
+        repo, user.person_id, Platform.PSN, profile.account_id, profile.online_id
     )
     await repo.set_achievements_visible(
         user.person_id, Platform.PSN, True, external_id=profile.account_id

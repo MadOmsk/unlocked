@@ -14,3 +14,14 @@ oauth-token-exchange-failed-text = Вернись в бот и нажми «По
 oauth-failed-title = Не получилось
 oauth-success-title = Готово, { $gamertag }
 oauth-success-text = Возвращайся в Telegram — там всё остальное.
+
+# Подтверждение Steam (#169).
+oauth-steam-done-title = Готово, { $name }
+oauth-steam-done-text = Steam подключён. Можно вернуться в приложение.
+oauth-steam-expired = Ссылка устарела. Начни подтверждение заново.
+oauth-steam-refused = Steam не подтвердил вход. Попробуй ещё раз.
+oauth-steam-unavailable = Steam сейчас не отвечает. Попробуй позже.
+oauth-steam-already-linked = У тебя подключён другой аккаунт Steam. Сначала отключи его.
+oauth-steam-private = Профиль закрыт. Открой его для всех и попробуй снова.
+oauth-steam-cooldown = Этот аккаунт недавно отвязывали. Подключить его снова можно чуть позже.
+oauth-steam-not-configured = Подключение Steam пока не настроено.

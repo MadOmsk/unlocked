@@ -43,7 +43,7 @@ from bot.constants import Platform
 from bot.db.repo import Repo
 from bot.handlers import awaiting
 from bot.handlers.backfill import run_steam
-from bot.handlers.delivery import notify_previous_owner, safe_edit
+from bot.handlers.delivery import safe_edit
 from bot.i18n import StaticI18nContext, static_i18n
 from bot.poller.steam_fetcher import SteamFetcher
 from bot.services import relink
@@ -392,6 +392,28 @@ async def _connect(
     # only for a genuine identity change, never for relinking the same
     # account after a hiccup.
     preview = await relink.preview(repo, tg_id, Platform.STEAM, profile.steam_id)
+    # Somebody else's account moves only to whoever proves it is theirs (#169).
+    if preview.held_by_other is not None:
+        proof = steam_auth.proof
+        await bot.send_message(
+            tg_id,
+            i18n.get("steam-taken"),
+            reply_markup=(
+                InlineKeyboardMarkup(
+                    inline_keyboard=[
+                        [
+                            InlineKeyboardButton(
+                                text=i18n.get("steam-taken-proof"),
+                                url=proof.start(await repo.person_id(tg_id)),
+                            )
+                        ]
+                    ]
+                )
+                if proof is not None and proof.available
+                else None
+            ),
+        )
+        return
     if preview.needs_confirmation and not confirmed:
         _pending_switch[tg_id] = raw
         await bot.send_message(
@@ -406,19 +428,9 @@ async def _connect(
         )
         return
 
-    taken_from = await relink.perform(
-        repo, tg_id, Platform.STEAM, profile.steam_id, profile.persona_name
-    )
+    await relink.perform(repo, tg_id, Platform.STEAM, profile.steam_id, profile.persona_name)
     log.info("connect_steam: tg_id=%s linked steam_id=%s", tg_id, profile.steam_id)
     await bot.send_message(tg_id, i18n.get("steam-connected", name=profile.persona_name))
-    if taken_from is not None:
-        await notify_previous_owner(
-            bot,
-            taken_from,
-            Platform.STEAM,
-            profile.persona_name,
-            locale=await repo.user_locale(await repo.person_id(taken_from)),
-        )
 
     # An account the bot already knows needs a delta, not a backfill (#52):
     # its history is already stored, and only games played since our newest

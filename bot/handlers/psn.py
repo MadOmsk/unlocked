@@ -32,7 +32,7 @@ from bot.constants import MAX_PSN_ACCOUNTS, Platform
 from bot.db.repo import Repo
 from bot.handlers import awaiting
 from bot.handlers.backfill import run_psn
-from bot.handlers.delivery import notify_previous_owner, safe_edit
+from bot.handlers.delivery import safe_edit
 from bot.i18n import StaticI18nContext, static_i18n
 from bot.poller.psn_fetcher import PsnFetcher
 from bot.services import relink
@@ -402,6 +402,23 @@ async def link_profile(
     # another leaves the first one's trophies behind, so ask before doing it
     # — but never for relinking the same account.
     preview = await relink.preview(repo, tg_id, Platform.PSN, profile.account_id)
+    # Somebody else's account moves only to whoever proves it is theirs (#169):
+    # its own token does, a nickname does not.
+    if preview.held_by_other is not None and keep_token is None:
+        await bot.send_message(
+            tg_id,
+            i18n.get("psn-taken"),
+            reply_markup=InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [
+                        InlineKeyboardButton(
+                            text=i18n.get("psn-taken-token"), callback_data="psntok:steps:new"
+                        )
+                    ]
+                ]
+            ),
+        )
+        return False
     if preview.needs_confirmation and not confirmed:
         _pending_switch[tg_id] = pending
         await bot.send_message(
@@ -413,9 +430,7 @@ async def link_profile(
         )
         return False
 
-    taken_from = await relink.perform(
-        repo, tg_id, Platform.PSN, profile.account_id, profile.online_id
-    )
+    await relink.perform(repo, tg_id, Platform.PSN, profile.account_id, profile.online_id)
     # Already verified True right above (#5) — recorded so /panel's login
     # row has a real answer from the moment someone links, not just after
     # the first backfill/resync gets around to setting it.
@@ -436,14 +451,6 @@ async def link_profile(
         else i18n.get("psn-connected", name=html_escape(profile.online_id)),
         parse_mode=ParseMode.HTML,
     )
-    if taken_from is not None:
-        await notify_previous_owner(
-            bot,
-            taken_from,
-            Platform.PSN,
-            profile.online_id,
-            locale=await repo.user_locale(await repo.person_id(taken_from)),
-        )
 
     # Backgrounded (SPEC 9, M-Steam-2d's own reasoning applies here too) —
     # the reply above must not wait for it. Run on every link, not just the

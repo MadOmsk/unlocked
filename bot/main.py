@@ -75,7 +75,7 @@ from bot.poller.steam_localization import SteamLocalization
 from bot.poller.steam_presence import SteamPresencePoller
 from bot.poller.title_platforms import TitlePlatformsRefresh
 from bot.poller.translations import Translations
-from bot.services import achievement_icons, media, poll_cadence, raw_answers
+from bot.services import achievement_icons, media, poll_cadence, raw_answers, relink
 from bot.services.admin_credentials import AdminCredentials
 from bot.services.connect import ConnectService
 from bot.services.crypto import TokenCipher
@@ -93,6 +93,7 @@ from bot.services.psn.personal import PsnPersonalAuth
 from bot.services.release_notify import announce_release_if_needed
 from bot.services.smtp_auth import SmtpAuth
 from bot.services.steam.auth import SteamAuth
+from bot.services.steam.proof import SteamProof
 from bot.services.steam_extras import SteamExtras
 from bot.services.store_collect import StoreCollector
 from bot.services.translate.auth import AnthropicAuth
@@ -220,6 +221,7 @@ async def run(settings: Settings) -> None:
     # SteamAuth imports once. on_dead mirrors psn_auth's above.
     steam_env_key = settings.steam_api_key.get_secret_value() if settings.steam_api_key else None
     steam_auth = SteamAuth(repo, cipher, env_key=steam_env_key)
+    steam_auth.proof = SteamProof(repo, steam_auth, settings.mini_app_url)
     steam_auth.on_dead = lambda: notifier.service_key_dead(Platform.STEAM)
     steam_auth.on_alive = lambda: notifier.service_key_alive(Platform.STEAM)
 
@@ -404,6 +406,7 @@ async def run(settings: Settings) -> None:
         contact=f"mailto:{settings.smtp_from}" if settings.smtp_from else None,
     )
     season_start.notifier = notifications
+    relink.notifier = notifications
 
     # Browsers that allowed push on another address of the app (an old dev
     # tunnel) get nothing more: one notice, one copy.

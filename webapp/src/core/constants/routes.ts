@@ -16,6 +16,7 @@ export const USER_ROUTES = {
   CONNECT_XBOX: "/connect/xbox",
   DISCONNECT_XBOX: "/disconnect/xbox",
   CONNECT_STEAM: "/connect/steam",
+  STEAM_PROOF: "/connect/steam/proof",
   DISCONNECT_STEAM: "/disconnect/steam",
   CONNECT_PSN: "/connect/psn",
   DISCONNECT_PSN: "/disconnect/psn",

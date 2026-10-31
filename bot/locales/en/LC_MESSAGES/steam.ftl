@@ -31,3 +31,7 @@ steam-disconnected = Steam disconnected. You can come back any time.
 # Relinking an account the bot already knows (#52): its history is already
 # stored, so only what appeared since last time needs fetching.
 steam-catch-up-started = I know this account already — its achievements are still here. Fetching only what is new.
+
+# An account somebody holds: only with proof (#169).
+steam-taken = This Steam account is linked to someone else. If it is yours, prove it by signing in through Steam: the account moves to you, and we never see your password.
+steam-taken-proof = Sign in through Steam

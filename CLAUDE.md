@@ -225,7 +225,7 @@ name, or when the tree goes stale.
 │   │   ├── xbox/                 auth.py (token storage, refresh), client.py (requests, retry,
 │   │   │                         backoff), models.py (pydantic responses)
 │   │   ├── steam/                auth.py (the admin-settable key, #17), client.py, achievements.py
-│   │   │                         (fetch_unlocked + schema/rarity cache)
+│   │   │                         (fetch_unlocked + schema/rarity cache), proof.py (Steam's sign-in, #169)
 │   │   ├── psn/                  auth.py (the shared NPSSO, PsnAuth), personal.py (a player's own
 │   │   │                         NPSSO, #233), client.py (to_thread wrapper),
 │   │   │                         achievements.py (sync_account, one game at a time, #26)
@@ -508,6 +508,12 @@ tests only: a migration number or a column named below may point there. History:
   unlinked_at, publishes)` says who holds it now and who held it before, and whether
   the holder announces its achievements (#20: the person's own switch per account; a
   muted account still counts in stats, summaries and `/online`).
+- **Somebody else's account moves only with proof it is theirs** (owner, 2026-10-31;
+  #169, `services/relink.py`): Xbox's own sign-in (which refuses a held account
+  outright), Steam's OpenID (`steam/proof.py`), a PSN account's own token. A link or
+  a nickname proves nothing, so the bot and the Mini App refuse a held account by
+  them (`taken`); a free account still links by them. Whoever loses one is told
+  (`account_taken`, no switch), Telegram or no Telegram.
 - **Unlinking never deletes**: the link is deactivated, the account and its history
   stay, and relinking finds them. `idx_links_one_active_per_platform` allows one
   account per platform per person — **dropping it is all multi-account support
@@ -1465,6 +1471,12 @@ The official Steam Web API, one shared API key, no per-user OAuth.
   constructor copy, so a change in the admin panel applies on the next call (#17).
 - People connect by profile URL, vanity URL or bare SteamID64. Their profile and game
   stats must be public — only they can change that.
+- **Steam's sign-in only proves an account** (#169; `services/steam/proof.py`,
+  `web/mini_steam.py`): `POST /api/mini/connect/steam/proof` gives the address, a
+  one-time state of ten minutes says who asked, Steam sends the browser back to
+  `/api/mini/auth/steam/return` on the app's own host, and the answer is checked with
+  Steam itself. It gives a SteamID and nothing else: no token, nothing kept, and a
+  hidden profile stays hidden. Offered for an account somebody holds.
 - **Hidden achievements are not a dead key** (2026-10-12): Steam answers a
   profile whose game details are hidden with 403 and a JSON
   `playerstats.error`, a bad key with 403 and an HTML page;

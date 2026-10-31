@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { ApiError, userApi } from "../../api";
 import { useApp } from "../../app/context";
 import { openExternal } from "../../app/env";
@@ -184,15 +184,43 @@ export function AccountsPane() {
 
 /** Steam by its profile link, vanity name or SteamID64; PSN by online id. */
 export function ConnectPage({ platform, onClose, layer }: { platform: "steam" | "psn"; onClose: () => void; layer: string }) {
-  const { data, tr, locale, reloadMe, toast, open } = useApp();
+  const { me, data, tr, locale, reloadMe, toast, open } = useApp();
   const [value, setValue] = useState("");
+  const [proof, setProof] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const steam = platform === "steam";
 
+  // Steam's sign-in opens outside the app: coming back is when it is done.
+  useEffect(() => {
+    if (!proof) return;
+    const back = () => {
+      if (document.visibilityState === "visible") void reloadMe();
+    };
+    document.addEventListener("visibilitychange", back);
+    return () => document.removeEventListener("visibilitychange", back);
+  }, [proof, reloadMe]);
+
+  useEffect(() => {
+    if (proof && me.steam.linked) {
+      toast(tr("backfillStarted"));
+      onClose();
+    }
+  }, [proof, me.steam.linked]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const prove = async () => {
+    try {
+      const res = await userApi.steamProof(data);
+      openExternal(res.url);
+    } catch (err) {
+      setError(errorText(err, locale));
+    }
+  };
+
   const submit = async () => {
     setBusy(true);
     setError(null);
+    setProof(false);
     try {
       if (steam) await userApi.connectSteam(data, value.trim());
       else await userApi.connectPsn(data, value.trim());
@@ -201,7 +229,12 @@ export function ConnectPage({ platform, onClose, layer }: { platform: "steam" | 
       onClose();
     } catch (err) {
       const key = err instanceof ApiError ? CONNECT_ERRORS[err.code] : undefined;
-      setError(key ? tr(key) : errorText(err, locale));
+      if (err instanceof ApiError && err.code === "taken") {
+        setError(tr(steam ? "connectTakenSteam" : "connectTakenPsn"));
+        setProof(steam && err.body?.proof === true);
+      } else {
+        setError(key ? tr(key) : errorText(err, locale));
+      }
     } finally {
       setBusy(false);
     }
@@ -231,6 +264,11 @@ export function ConnectPage({ platform, onClose, layer }: { platform: "steam" | 
         <Button wide type="submit" busy={busy} disabled={!value.trim()}>
           {tr("submit")}
         </Button>
+        {proof && (
+          <Button wide type="button" variant="tonal" onClick={() => void prove()}>
+            {tr("connectSteamProof")}
+          </Button>
+        )}
       </form>
       {!steam && (
         <Group>

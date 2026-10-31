@@ -225,6 +225,10 @@ export class UserApi extends BaseApi {
     });
   }
 
+  steamProof(initData: string): Promise<{ ok: boolean; url: string }> {
+    return this.post<{ ok: boolean; url: string }>(initData, USER_ROUTES.STEAM_PROOF);
+  }
+
   disconnectSteam(initData: string): Promise<{ ok: boolean }> {
     return this.post<{ ok: boolean }>(initData, USER_ROUTES.DISCONNECT_STEAM);
   }

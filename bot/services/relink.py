@@ -10,20 +10,31 @@ once, and a person deserves to know which before it does:
 - they link an account the bot already knows, and its whole history becomes
   theirs without a single request to the platform;
 - they take an account somebody else currently holds, and that person loses
-  it — silently, unless we tell them.
+  it. **Only with proof that it is theirs** (#169): Microsoft's sign-in, Steam's
+  (`steam/proof.py`), a PSN account's own token. A link or a nickname proves
+  nothing, so those doors refuse an account `held_by_other` names.
 
-This module answers "what would happen" and then performs it. It knows
-nothing about Telegram: handlers do the asking and the telling, which is
-also why `perform` hands back who the account was taken from instead of
-notifying anyone itself.
+This module answers "what would happen" and then performs it, and tells
+whoever lost the account through `notifier` (they may have no Telegram). It
+knows nothing about Telegram: handlers do the asking.
 """
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
-from bot.constants import AccountPlatform
+from bot.constants import AccountPlatform, Platform
 from bot.db.repo import PlatformLink, Repo
+
+if TYPE_CHECKING:
+    from bot.services.notifier import Notifier
+
+log = logging.getLogger(__name__)
+
+# Set by main.py once the notifications exist.
+notifier: Notifier | None = None
 
 
 @dataclass(slots=True)
@@ -46,6 +57,10 @@ class LinkPreview:
     incoming_id: str
     """The account being linked."""
 
+    held_by_other: int | None = None
+    """The person holding it, when it is somebody else: `taken_from` is their
+    Telegram id, which a person who signed in by email does not have."""
+
     @property
     def is_switch(self) -> bool:
         """True only for a genuine identity change of *this person's* own
@@ -63,7 +78,7 @@ class LinkPreview:
         A plain first link, and a relink of the same account, both stay
         silent. Those are the common cases and a prompt there is noise.
         """
-        return self.is_switch or self.taken_from is not None
+        return self.is_switch or self.taken_from is not None or self.held_by_other is not None
 
 
 async def preview(repo: Repo, tg_id: int, platform: str, external_id: str) -> LinkPreview:
@@ -90,7 +105,16 @@ async def preview(repo: Repo, tg_id: int, platform: str, external_id: str) -> Li
         incoming_achievements=await repo.account_achievement_count(platform, external_id),
         taken_from=owner if owner is not None and owner != tg_id else None,
         incoming_id=external_id,
+        held_by_other=await held_by_other(repo, await repo.person_id(tg_id), platform, external_id),
     )
+
+
+async def held_by_other(
+    repo: Repo, person_id: int | None, platform: str, external_id: str
+) -> int | None:
+    """The person holding this account, when it is not `person_id`."""
+    holder = await repo.account_holder(platform, external_id)
+    return holder if holder is not None and holder != person_id else None
 
 
 async def perform(
@@ -103,9 +127,32 @@ async def perform(
     leaving it would keep the bot polling an account on behalf of someone who
     does not hold it.
     """
-    taken_from = await repo.link_platform_account(
-        await repo.person_id(tg_id), platform, external_id, display_name
-    )
-    if taken_from is not None and platform == AccountPlatform.XBOX:
-        await repo.delete_token(await repo.person_id(taken_from))
+    return await link_person(repo, await repo.person_id(tg_id), platform, external_id, display_name)
+
+
+async def link_person(
+    repo: Repo, person_id: int, platform: str, external_id: str, display_name: str | None
+) -> int | None:
+    """`perform` by person: link it and tell whoever lost it, by whichever way
+    they hear (a notice never stops the linking). Returns their Telegram id."""
+    holder = await held_by_other(repo, person_id, platform, external_id)
+    taken_from = await repo.link_platform_account(person_id, platform, external_id, display_name)
+    if holder is None:
+        return taken_from
+    if platform == AccountPlatform.XBOX:
+        await repo.delete_token(holder)
+    if notifier is not None:
+        try:
+            await notifier.notify(
+                holder,
+                "account_taken",
+                platform=_PLATFORM_NAMES.get(platform, platform),
+                name=display_name or external_id,
+            )
+        except Exception:
+            log.exception("could not tell person %s their account moved", holder)
     return taken_from
+
+
+# In a notice, whatever the language: the platforms' own names.
+_PLATFORM_NAMES = {Platform.STEAM: "Steam", Platform.PSN: "PlayStation", "xbox": "Xbox"}

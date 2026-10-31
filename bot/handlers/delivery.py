@@ -1,6 +1,5 @@
 """What delivers rather than renders (#63): editing the message a callback
-came from, a private notice to somebody who is not the person being
-answered, and the app's promo posted to a chat (the super-admin's action,
+came from, and the app's promo posted to a chat (the super-admin's action,
 for both admin panels). A view returns a screen and stops there, so these live on
 the handler side of the line.
 """
@@ -19,7 +18,6 @@ from bot.db.repo import AchievementRow, ChatTarget, Repo
 from bot.i18n import gettext
 from bot.services import post_picture
 from bot.services.message_log import stats_category
-from bot.views.parts import platform_label
 from bot.views.promo import promo_keyboard, promo_text
 
 log = logging.getLogger(__name__)
@@ -37,30 +35,6 @@ async def safe_edit(
     if isinstance(callback.message, Message):
         with contextlib.suppress(Exception):
             await callback.message.edit_text(text, reply_markup=markup, **kwargs)
-
-
-async def notify_previous_owner(
-    bot: Bot, tg_id: int, platform: str, name: str, *, locale: str
-) -> None:
-    """Tell whoever just lost an account that they lost it (#52, owner
-    decision) — deliberately without naming who took it: that is somebody
-    else's Telegram identity, and the person who lost the account can sort
-    it out with the account itself, not with a name we volunteered.
-
-    Best-effort: they may have blocked the bot, and a failed notice must not
-    fail the linking that triggered it.
-    """
-    with contextlib.suppress(Exception):
-        await bot.send_message(
-            tg_id,
-            gettext(
-                "connect",
-                "connect-account-taken",
-                locale=locale,
-                platform=platform_label(platform, locale),
-                name=name,
-            ),
-        )
 
 
 async def send_promo(bot: Bot, chat_id: int, locale: str, mini_app_url: str | None) -> None:

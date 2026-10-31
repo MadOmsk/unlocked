@@ -12,6 +12,7 @@ notification-game-news-lead = { $post ->
 }
 notification-unknown = Что-то новое в приложении
 notification-xbox-login-dead = Вход в Xbox слетел — подключи аккаунт заново, чтобы достижения снова приходили
+notification-account-taken = Аккаунт { $platform } «{ $name }» теперь у другого человека: он подтвердил, что аккаунт его. Если это ошибка, напиши администратору.
 notification-psn-token-dead = Личный токен PSN для { $name } больше не работает — аккаунт снова опрашивается общим токеном и реже. Добавь новый токен в панели: /panel → PlayStation
 # Новые достижения того, на кого подписан (owner, 2026-10-05). $trophies — yes для PSN.
 notification-new-post = { $name } получает { $trophies ->

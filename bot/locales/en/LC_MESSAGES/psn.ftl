@@ -104,3 +104,7 @@ psn-add-by-nick = 👤 By nickname
 psn-add-by-token = 🔑 By token
 psn-link-by-token-button = 🔑 Link by token
 psn-token-linked = ✅ Linked <b>PSN: { $name }</b> — by token.
+
+# An account somebody holds: only with proof (#169).
+psn-taken = This PlayStation account is linked to someone else. If it is yours, link it with its personal token: the token proves it is yours.
+psn-taken-token = 🔑 How to link by token

@@ -393,6 +393,17 @@ class _PlatformLinksRepo:
         row = await cursor.fetchone()
         return row["tg_id"] if row else None
 
+    async def account_holder(self, platform: str, external_id: str) -> int | None:
+        """The person holding this account now: unlike `account_owner`, also
+        one who has no Telegram."""
+        cursor = await self._conn.execute(
+            "SELECT person_id FROM account_links"
+            " WHERE platform = ? AND external_id = ? AND is_active = 1",
+            (platform, external_id),
+        )
+        row = await cursor.fetchone()
+        return row["person_id"] if row else None
+
     async def account_achievement_count(self, platform: str, external_id: str) -> int:
         """How much this account has earned, regardless of who holds it —
         what a person is about to gain or stop seeing when a link changes

@@ -47,10 +47,7 @@ connect-switch-incoming-known =
 connect-switch-yes = Yes, link it
 connect-switch-cancel = Cancel
 connect-switch-cancelled = Left as it was.
-connect-account-taken =
-    ⚠️ Your { $platform } account "{ $name }" is now linked to a different user of this bot.
 
-    Its achievements no longer count towards your stats. If that was a mistake, just link the account again.
 
 # Onboarding (#53, 2026-09-12): /start no longer leads with one platform.
 # The greeting used to promise "XBOX achievements" and hand over a Microsoft

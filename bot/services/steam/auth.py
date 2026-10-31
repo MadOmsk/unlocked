@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Awaitable, Callable
+from typing import TYPE_CHECKING
 
 from bot.constants import TokenStatus
 from bot.db.repo import Repo
@@ -27,6 +28,9 @@ from bot.services.credential_health import CredentialHealth
 from bot.services.crypto import TokenCipher
 from bot.services.steam.client import check_alive
 from bot.util import utcnow
+
+if TYPE_CHECKING:
+    from bot.services.steam.proof import SteamProof
 
 log = logging.getLogger(__name__)
 
@@ -61,6 +65,8 @@ class SteamAuth:
         self._repo = repo
         self._cipher = cipher
         self._env_key = env_key or None
+        # Steam's own sign-in (#169); main.py sets it, as PsnAuth.personal.
+        self.proof: SteamProof | None = None
         self._key: str | None = None
         self._seeded = False
         self._health = CredentialHealth(repo, STATUS_KEY, CHECKED_AT_KEY, label="steam")

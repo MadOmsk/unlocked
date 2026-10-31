@@ -14,3 +14,14 @@ oauth-token-exchange-failed-text = Go back to the bot and press “Connect XBOX�
 oauth-failed-title = That didn't work
 oauth-success-title = All set, { $gamertag }
 oauth-success-text = Head back to Telegram — everything else happens there.
+
+# Proving a Steam account (#169).
+oauth-steam-done-title = All set, { $name }
+oauth-steam-done-text = Steam is connected. You can go back to the app.
+oauth-steam-expired = This link has expired. Start the check again.
+oauth-steam-refused = Steam did not confirm the sign-in. Try again.
+oauth-steam-unavailable = Steam is not answering right now. Try later.
+oauth-steam-already-linked = You have another Steam account connected. Disconnect it first.
+oauth-steam-private = The profile is private. Make it public and try again.
+oauth-steam-cooldown = This account was unlinked recently. It can be connected again a little later.
+oauth-steam-not-configured = Connecting Steam is not set up yet.
