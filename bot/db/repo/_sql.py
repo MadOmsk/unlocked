@@ -76,19 +76,19 @@ def active_account(
         order = (
             "ORDER BY CASE WHEN x_p.state = 'Online' AND x_p.title_id IS NOT NULL THEN 2"
             "              WHEN x_p.state = 'Online' THEN 1 ELSE 0 END DESC,"
-            "         x_p.updated_at DESC, x.linked_at, x.rowid "
+            "         x_p.updated_at DESC, x.linked_at, x.seq "
         )
         source = (
             "FROM account_links x "
             "LEFT JOIN psn_presence_state x_p ON x_p.account_id = x.external_id "
         )
     else:
-        order = "ORDER BY x.linked_at, x.rowid "
+        order = "ORDER BY x.linked_at, x.seq "
         source = "FROM account_links x "
     return (
         f"LEFT JOIN account_links {link} ON {link}.person_id = {on}"
         f"   AND {link}.platform = '{platform}' AND {link}.is_active = 1"
-        f"   AND {link}.rowid = (SELECT x.rowid {source}"
+        f"   AND {link}.seq = (SELECT x.seq {source}"
         f"      WHERE x.person_id = {on} AND x.platform = '{platform}' AND x.is_active = 1"
         f"      {order}LIMIT 1) "
         f"LEFT JOIN accounts {alias} ON {alias}.platform = {link}.platform"
@@ -141,7 +141,7 @@ def member_source(members: Sequence[int] | None) -> str:
 # A person's nickname as shown, digits included (#157): `RideTheSun#4821`.
 HANDLE_SHOWN = (
     "CASE WHEN u.handle IS NULL THEN NULL WHEN u.handle_number = 0 THEN u.handle"
-    " ELSE u.handle || '#' || printf('%04d', u.handle_number) END AS handle"
+    " ELSE u.handle || '#' || lpad(u.handle_number::text, 4, '0') END AS handle"
 )
 
 # The same columns, aliased back to the names every row-mapper already reads.
@@ -230,10 +230,10 @@ def platform_is(platform: str, column: str = "platform") -> tuple[str, list[str]
 # versions of the list (`versions.store_ids`), not as a column of the list.
 STEAM_APP_OF_TITLE = (
     "(CASE WHEN t.platform = 'steam' THEN CAST(t.title_id AS INTEGER)"
-    " ELSE (SELECT CAST(json_extract(j.value, '$[1]') AS INTEGER)"
-    "  FROM versions v, json_each(v.store_ids) j"
+    " ELSE (SELECT (j.value->>1)::bigint"
+    "  FROM versions v, jsonb_array_elements(v.store_ids::jsonb) j"
     "  WHERE v.platform = t.platform AND v.title_id = t.title_id"
-    "   AND json_extract(j.value, '$[0]') = 'steam_twin' LIMIT 1) END)"
+    "   AND j.value->>0 = 'steam_twin' LIMIT 1) END)"
 )
 
 
@@ -304,9 +304,9 @@ def rarity(prefix: str = "s.") -> str:
 # The app's own points (owner, 2026-10-27), one scale for every platform in
 # place of Xbox's gamerscore: a common achievement 10, a rare one (10 % and
 # under) 20, a legendary one (1 % and under) 30, a mythic one (Xbox's Mythic,
-# PSN's platinum) 50 — the Mini App's tiers (`views.rareLevel`). Tens, so a
+# PSN's platinum) 100 (owner, 2026-10-29) — the Mini App's tiers (`views.rareLevel`). Tens, so a
 # step between can come later.
-POINTS_COMMON, POINTS_RARE, POINTS_LEGENDARY, POINTS_MYTHIC = 10, 20, 30, 50
+POINTS_COMMON, POINTS_RARE, POINTS_LEGENDARY, POINTS_MYTHIC = 10, 20, 30, 100
 
 
 def points(prefix: str = "s.") -> str:

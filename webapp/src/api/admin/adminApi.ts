@@ -3,6 +3,7 @@ import { ADMIN_ROUTES, API_BASE_ROUTES } from "../../core/constants/routes";
 import type {
   AdminAction,
   AdminActionStep,
+  AdminChatAdmin,
   AdminChatRow,
   AdminHome,
   AdminKeys,
@@ -12,9 +13,16 @@ import type {
   AdminUserRow,
 } from "./adminApiModels";
 
+export type Role = "user" | "admin" | "superadmin";
+
 export class AdminApi extends BaseApi {
   constructor(baseUrl: string = API_BASE_ROUTES.ADMIN) {
     super(baseUrl);
+  }
+
+  /** A person's role (owner, 2026-10-28): the super-admin's to read and give. */
+  fetchRole(initData: string, personId: number): Promise<{ role: Role; fixed: boolean }> {
+    return this.get<{ role: Role; fixed: boolean }>(initData, ADMIN_ROUTES.ROLE(personId));
   }
 
   fetchHome(initData: string): Promise<AdminHome> {
@@ -82,6 +90,20 @@ export class AdminApi extends BaseApi {
     value: AdminSetting["value"],
   ): Promise<AdminSettings> {
     return this.patch<AdminSettings>(initData, ADMIN_ROUTES.CHAT_SETTINGS(chatId), { key, value });
+  }
+
+  /** A chat's admin and who the role may go to (#232). */
+  fetchChatAdmin(initData: string, chatId: number): Promise<AdminChatAdmin> {
+    return this.get<AdminChatAdmin>(initData, ADMIN_ROUTES.CHAT_ADMIN(chatId));
+  }
+
+  /** Appoints (an app admin) or hands the role on (the chat admin, who loses it: `still` false). */
+  putChatAdmin(initData: string, chatId: number, tgId: number): Promise<{ ok: boolean; still: boolean }> {
+    return this.put<{ ok: boolean; still: boolean }>(initData, ADMIN_ROUTES.CHAT_ADMIN(chatId), { tg_id: tgId });
+  }
+
+  deleteChatAdmin(initData: string, chatId: number): Promise<AdminChatAdmin> {
+    return this.delete<AdminChatAdmin>(initData, ADMIN_ROUTES.CHAT_ADMIN(chatId));
   }
 
 }

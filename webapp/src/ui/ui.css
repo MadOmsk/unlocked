@@ -143,6 +143,25 @@
   background: var(--tertiary);
 }
 
+/* A text whose translation is on its way. */
+.translating {
+  filter: blur(4px);
+  user-select: none;
+  animation: translating 1.6s ease-in-out infinite;
+}
+
+@keyframes translating {
+  50% {
+    opacity: 0.55;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .translating {
+    animation: none;
+  }
+}
+
 .wave-loading .wave-on {
   animation: wave-run 1s linear infinite;
 }
@@ -473,6 +492,10 @@ button.chip {
   font-size: 16px;
 }
 
+.field-box .link-btn {
+  flex: 0 0 auto;
+}
+
 .field-box input::placeholder {
   color: var(--on-surface-3);
 }
@@ -692,6 +715,12 @@ button.chip {
   pointer-events: auto;
 }
 
+/* Hidden, it takes no room: the bar's other actions keep the corner. */
+.bar-action:not(.bar-action-on) {
+  position: absolute;
+  right: 8px;
+}
+
 .appbar-solid {
   box-shadow: 0 1px 0 var(--outline-soft);
 }
@@ -737,6 +766,10 @@ button.chip {
 .appbar-actions {
   display: flex;
   gap: 4px;
+}
+
+.page-over > .page {
+  z-index: 70;
 }
 
 .sheet-wrap,
@@ -1409,6 +1442,69 @@ body:has(.sheet) .toast {
   color: var(--primary);
 }
 
+
+/* The head of a page about a list of one thing — a game's achievements, the
+   season pass: a cover in its progress ring on the Hero, its name, its count. */
+
+.list-page .hero-stage {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 8px;
+}
+
+.list-ring {
+  position: relative;
+  margin-bottom: 6px;
+}
+
+.list-cover {
+  width: 148px;
+  height: 148px;
+  border-radius: 50%;
+  box-shadow: var(--shadow-2);
+}
+
+.list-name {
+  max-width: 100%;
+  font-size: 22px;
+  font-stretch: 110%;
+}
+
+.list-stats {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: center;
+  gap: 6px 12px;
+}
+
+.list-stats > b {
+  font-size: 34px;
+}
+
+.list-stats > b small {
+  font-size: 18px;
+  color: var(--on-surface-2);
+}
+
+.list-pct {
+  font-size: 15px;
+  font-weight: 750;
+  color: var(--primary);
+}
+
+.list-stats-done .list-pct {
+  color: var(--tertiary);
+}
+
+.list-gs {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--on-surface-2);
+}
+
 .hero-stage-still {
   text-align: center;
 }
@@ -1419,13 +1515,13 @@ body:has(.sheet) .toast {
   display: flex;
   flex-direction: column;
   gap: 16px;
-  padding: 0 20px 8px;
+  padding: 0 12px 8px;
 }
 
 .crop-box {
   position: relative;
   width: 100%;
-  max-width: 360px;
+  max-width: 480px;
   aspect-ratio: 1;
   margin: 0 auto;
   overflow: hidden;
@@ -1474,4 +1570,74 @@ body:has(.sheet) .toast {
 
 .crop-mask-square {
   border-radius: var(--r-l);
+}
+
+/* A picture appears whole once it has loaded (main.tsx marks it), in one
+   short fade — never drawn top to bottom as it arrives. */
+img {
+  transition: opacity var(--t-mid) ease;
+}
+
+img:not([data-in]) {
+  opacity: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  img {
+    transition: none;
+  }
+}
+
+/* Every picture across a page's head — a game's, a post's, an achievement's,
+   a person's — fades into the page at its foot, the same way. */
+.hero-full,
+.gp-hero,
+.pp-banner {
+  border-radius: 0;
+  -webkit-mask-image: linear-gradient(to bottom, #000 58%, transparent);
+  mask-image: linear-gradient(to bottom, #000 58%, transparent);
+}
+
+/* A picture set on its own ground (an achievement's, a post's): the ground
+   fades into the page as a full picture does; the picture itself stays whole. */
+.hero:not(.hero-full) {
+  border-radius: 0;
+  background: none;
+}
+
+.hero:not(.hero-full)::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background: var(--surface-3);
+}
+
+.hero:not(.hero-full)::before,
+.hero:not(.hero-full) .hero-ground {
+  -webkit-mask-image: linear-gradient(to bottom, #000 58%, transparent);
+  mask-image: linear-gradient(to bottom, #000 58%, transparent);
+}
+
+.hero:not(.hero-full) .hero-ground {
+  z-index: -1;
+  border-radius: 0;
+}
+
+.detail-kicker {
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--on-surface-3);
+}
+
+.detail-kicker.mark-rare {
+  color: var(--tier-epic);
+}
+
+.detail-kicker.mark-legendary {
+  color: var(--tier-legendary);
+}
+
+.detail-kicker.mark-mythic {
+  color: var(--tier-mythic);
 }

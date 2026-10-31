@@ -253,7 +253,15 @@ class _StoresRepo:
             "   THEN 'native' ELSE versions.description_source END,"
             "  description_ru_of = CASE WHEN excluded.description_ru IS NOT NULL"
             "   THEN NULL ELSE versions.description_ru_of END,"
-            "  media = excluded.media, live_service = excluded.live_service,"
+            # Steam's library art comes from a request of its own
+            # (`steam_store.library_art`): an answer without it — a re-parse
+            # of the kept `appdetails` — keeps what was found.
+            "  media = CASE WHEN versions.media IS NULL THEN excluded.media ELSE ("
+            "   jsonb_strip_nulls("
+            "   jsonb_build_object('poster', versions.media::jsonb->'poster',"
+            "    'hero', versions.media::jsonb->'hero'))"
+            "   || excluded.media::jsonb)::text END,"
+            "  live_service = excluded.live_service,"
             # A version somebody here plays stays `played` once it is.
             "  origin = CASE WHEN versions.origin = 'played' THEN 'played'"
             "   ELSE excluded.origin END,"
@@ -501,9 +509,13 @@ class _StoresRepo:
             ):
                 await self._conn.execute(f"DELETE FROM {table} WHERE hltb_id = ?", (entry.hltb_id,))
             await self._conn.executemany(
-                "INSERT OR REPLACE INTO hltb_platform_times (hltb_id, platform, comp_main,"
+                "INSERT INTO hltb_platform_times (hltb_id, platform, comp_main,"
                 " comp_plus, comp_100, comp_low, comp_high, count_comp, count_total)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+                " ON CONFLICT (hltb_id, platform) DO UPDATE SET comp_main = excluded.comp_main, "
+                "comp_plus = excluded.comp_plus, comp_100 = excluded.comp_100, comp_low = "
+                "excluded.comp_low, comp_high = excluded.comp_high, count_comp = "
+                "excluded.count_comp, count_total = excluded.count_total",
                 [
                     (
                         entry.hltb_id,
@@ -520,9 +532,12 @@ class _StoresRepo:
                 ],
             )
             await self._conn.executemany(
-                "INSERT OR REPLACE INTO hltb_platform_groups (hltb_id, platforms, comp_main,"
+                "INSERT INTO hltb_platform_groups (hltb_id, platforms, comp_main,"
                 " comp_plus, comp_100, comp_all, compare, count_comp)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+                " ON CONFLICT (hltb_id, platforms) DO UPDATE SET comp_main = excluded.comp_main, "
+                "comp_plus = excluded.comp_plus, comp_100 = excluded.comp_100, comp_all = "
+                "excluded.comp_all, compare = excluded.compare, count_comp = excluded.count_comp",
                 [
                     (
                         entry.hltb_id,
@@ -538,16 +553,19 @@ class _StoresRepo:
                 ],
             )
             await self._conn.executemany(
-                "INSERT OR IGNORE INTO hltb_entry_platforms (hltb_id, platform) VALUES (?, ?)",
+                "INSERT INTO hltb_entry_platforms (hltb_id, platform) VALUES (?, ?)"
+                " ON CONFLICT DO NOTHING",
                 [(entry.hltb_id, p) for p in entry.platforms],
             )
             await self._conn.executemany(
-                "INSERT OR REPLACE INTO hltb_review_scores (hltb_id, score, votes)"
-                " VALUES (?, ?, ?)",
+                "INSERT INTO hltb_review_scores (hltb_id, score, votes)"
+                " VALUES (?, ?, ?)"
+                " ON CONFLICT (hltb_id, score) DO UPDATE SET votes = excluded.votes",
                 [(entry.hltb_id, score, votes) for score, votes in entry.reviews.items()],
             )
             await self._conn.executemany(
-                "INSERT OR IGNORE INTO hltb_related (hltb_id, related_id) VALUES (?, ?)",
+                "INSERT INTO hltb_related (hltb_id, related_id) VALUES (?, ?)"
+                " ON CONFLICT DO NOTHING",
                 [(entry.hltb_id, item.hltb_id) for item in entry.others],
             )
             unread = "hltb_entries.page_read_at IS NULL"
@@ -700,10 +718,10 @@ class _StoresRepo:
         cursor = await self._conn.execute(
             "SELECT v.version_id, v.game_id, v.console, v.store, v.kind, v.role, v.name,"
             " v.name_ru, vh.hltb_id, vh.source, vh.score, e.game_type,"
-            " (SELECT group_concat(platform, '|') FROM ("
+            " (SELECT string_agg(platform, '|') FROM ("
             "   SELECT platform FROM hltb_entry_platforms p WHERE p.hltb_id = vh.hltb_id"
             "   UNION SELECT platform FROM hltb_platform_times t WHERE t.hltb_id = vh.hltb_id"
-            " )) AS entry_platforms"
+            " ) AS named) AS entry_platforms"
             " FROM versions v LEFT JOIN version_hltb vh ON vh.version_id = v.version_id"
             " LEFT JOIN hltb_entries e ON e.hltb_id = vh.hltb_id"
             f" WHERE v.game_id IS NOT NULL{where} ORDER BY v.game_id, v.version_id",
@@ -760,7 +778,8 @@ class _StoresRepo:
                     f"DELETE FROM dlc_hltb WHERE source = 'auto' AND dlc_id IN ({marks})", batch
                 )
             await self._conn.executemany(
-                "INSERT OR IGNORE INTO dlc_hltb (dlc_id, hltb_id, source) VALUES (?, ?, 'auto')",
+                "INSERT INTO dlc_hltb (dlc_id, hltb_id, source) VALUES (?, ?, 'auto')"
+                " ON CONFLICT DO NOTHING",
                 sorted(links.items()),
             )
 
@@ -860,8 +879,8 @@ class _StoresRepo:
             )
         else:
             await self._conn.execute(
-                "INSERT OR IGNORE INTO version_hltb (version_id, hltb_id, source, score)"
-                " VALUES (?, ?, ?, ?)",
+                "INSERT INTO version_hltb (version_id, hltb_id, source, score)"
+                " VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING",
                 (version_id, hltb_id, source, score),
             )
         await self._conn.commit()
@@ -1062,9 +1081,11 @@ class _StoresRepo:
                 # the kept version already has one with that other version.
                 for column, other in (("version_id", "other_id"), ("other_id", "version_id")):
                     await self._conn.execute(
-                        f"UPDATE OR IGNORE match_decisions SET {column} = ?"
-                        f" WHERE {column} = ? AND {other} <> ?",
-                        (into, old, into),
+                        f"UPDATE match_decisions SET {column} = ?"
+                        f" WHERE {column} = ? AND {other} <> ?"
+                        " AND NOT EXISTS (SELECT 1 FROM match_decisions o"
+                        f"  WHERE o.{column} = ? AND o.{other} = match_decisions.{other})",
+                        (into, old, into, into),
                     )
                 await self._conn.execute(
                     "UPDATE games SET anchor_version_id = ? WHERE anchor_version_id = ?"
@@ -1073,8 +1094,9 @@ class _StoresRepo:
                 )
                 await self.add_store_ids(into, await self.store_ids_of(old))
                 await self._conn.execute(
-                    "INSERT OR IGNORE INTO version_hltb (version_id, hltb_id, source)"
-                    " SELECT ?, hltb_id, source FROM version_hltb WHERE version_id = ?",
+                    "INSERT INTO version_hltb (version_id, hltb_id, source)"
+                    " SELECT ?, hltb_id, source FROM version_hltb WHERE version_id = ?"
+                    " ON CONFLICT DO NOTHING",
                     (into, old),
                 )
                 await self._conn.execute(
@@ -1158,7 +1180,8 @@ class _StoresRepo:
         """One visit's answer, stamped found or not."""
         await self._conn.execute(
             "UPDATE editions SET image_path = ?, image_hash = ?,"
-            " image_checked_at = strftime('%Y-%m-%dT%H:%M:%S', 'now') WHERE edition_id = ?",
+            " image_checked_at = to_char(now() AT TIME ZONE 'utc', 'YYYY-MM-DD\"T\"HH24:MI:SS')"
+            " WHERE edition_id = ?",
             (path, digest, edition_id),
         )
         await self._conn.commit()
@@ -1194,7 +1217,7 @@ class _StoresRepo:
             "SELECT e.edition_id, e.name, e.scope, e.kind, i.store_id, i.item_kind,"
             " i.is_primary, i.role FROM editions e"
             " JOIN edition_items i ON i.edition_id = e.edition_id"
-            " ORDER BY e.edition_id, i.rowid"
+            " ORDER BY e.edition_id, i.seq"
         )
         found: dict[int, dict[str, Any]] = {}
         for r in await cursor.fetchall():

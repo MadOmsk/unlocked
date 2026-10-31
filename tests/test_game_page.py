@@ -58,7 +58,8 @@ def test_a_search_ranks_the_name_itself_first() -> None:
         (7, "Ведьмак 3: Дикая Охота"),
     ]
     ranked = sorted(game_page.rank_search(names, "portal"), key=lambda m: (m[1], m[2]))
-    assert [game for game, _rank, _length in ranked] == [2, 1, 3, 4, 5]
+    # "The" is no part of a name: "The Portal Saga" starts with "portal".
+    assert [game for game, _rank, _length in ranked] == [2, 1, 4, 3, 5]
     # Case and ё do not matter.
     assert [g for g, _r, _l in game_page.rank_search(names, "ВЕДЬМАК")] == [7]
     assert game_page.rank_search(names, "  ") == []
@@ -237,8 +238,13 @@ async def test_a_favorite_whose_id_is_gone_is_found_by_its_anchor(repo: Repo) ->
     await repo._conn.execute("UPDATE versions SET game_id = NULL WHERE game_id = ?", (game,))
     await repo._conn.execute("DELETE FROM games WHERE game_id = ?", (game,))
     await repo._conn.commit()
-    # The old id now names another game.
-    assert await repo.create_game("Some Other Game", None) == game
+    # The old id now names another game (written with it: PostgreSQL, unlike
+    # SQLite's rowid, never hands an id out twice by itself).
+    await repo._conn.execute(
+        "INSERT INTO games (game_id, name, created_at, updated_at)"
+        " VALUES (?, 'Some Other Game', 'now', 'now')",
+        (game,),
+    )
     again = await repo.adopt_list_as_game("steam", "620")
     assert again is not None and again != game
     assert await repo.favorite_game_ids(person) == [again]
@@ -351,3 +357,27 @@ async def test_an_xbox_lists_later_achievements_are_known_by_the_earned_rows(rep
     await repo._conn.commit()
     assert await repo.earned_groups("xbox_modern", "T1") == {"1": "base", "2": "non_base"}
     assert await repo.earned_groups("xbox_modern", "other") == {}
+
+
+def test_a_search_finds_what_people_type() -> None:
+    names = [
+        (1, "The Witcher 3: Wild Hunt"),
+        (2, "Mafia II: Definitive Edition"),
+        (3, "Marvel's Spider-Man"),
+        (4, "Grand Theft Auto V"),
+        (5, "Pokémon Legends"),
+    ]
+
+    def found(query: str) -> list[int]:
+        return [
+            g
+            for g, _r, _l in sorted(game_page.rank_search(names, query), key=lambda m: (m[1], m[2]))
+        ]
+
+    assert found("the witcher") == [1]
+    assert found("wild witcher") == [1]
+    assert found("witchr") == [1]
+    assert found("mafia 2") == [2]
+    assert found("spiderman") == [3]
+    assert found("gta") == [4]
+    assert found("pokemon") == [5]

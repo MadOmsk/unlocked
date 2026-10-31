@@ -22,8 +22,8 @@ class _OctopusRepo:
         """Put an entry in the queue, due now. Returns whether it was new."""
         now = utcnow_iso()
         cursor = await self._conn.execute(
-            "INSERT OR IGNORE INTO octopus_queue (key, reason, due_at, created_at)"
-            " VALUES (?, ?, ?, ?)",
+            "INSERT INTO octopus_queue (key, reason, due_at, created_at)"
+            " VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING",
             (key, reason, now, now),
         )
         await self._conn.commit()
@@ -111,9 +111,10 @@ class _OctopusRepo:
         """The versions a store id names (`versions.store_ids`: a PSN title
         id, an Xbox product id, …), case aside."""
         return await self._ids(
-            "SELECT DISTINCT v.version_id FROM versions v, json_each(v.store_ids) j"
-            " WHERE json_extract(j.value, '$[0]') = ?"
-            " AND UPPER(json_extract(j.value, '$[1]')) = UPPER(?) ORDER BY v.version_id",
+            "SELECT DISTINCT v.version_id FROM versions v,"
+            " jsonb_array_elements(v.store_ids::jsonb) j"
+            " WHERE j.value->>0 = ?"
+            " AND UPPER(j.value->>1) = UPPER(?) ORDER BY v.version_id",
             (kind, value),
         )
 
@@ -125,7 +126,8 @@ class _OctopusRepo:
             "SELECT version_id FROM edition_items"
             " WHERE edition_id = ? AND version_id IS NOT NULL"
             " GROUP BY version_id"
-            " ORDER BY MIN(COALESCE(role, 'main') <> 'main'), MAX(is_primary) DESC, version_id",
+            " ORDER BY MIN(CASE WHEN COALESCE(role, 'main') <> 'main' THEN 1 ELSE 0 END),"
+            " MAX(is_primary) DESC, version_id",
             (edition_id,),
         )
 

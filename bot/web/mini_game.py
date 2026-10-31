@@ -14,8 +14,10 @@ from aiohttp import web
 
 from bot.constants import account_platform_of
 from bot.db.repo import Repo
-from bot.services import game_descriptions, game_page
+from bot.services import game_page, steam_library_art
+from bot.services.game_link import GameLinker
 from bot.services.naming import person_name_of
+from bot.web.mini_chat import news_text, news_title
 
 log = logging.getLogger(__name__)
 
@@ -60,11 +62,25 @@ async def _game_id(request: web.Request, repo: Repo) -> int:
             raise web.HTTPBadRequest(text="game_id or platform and title_id")
         game = await repo.game_of_list(platform, title_id)
         if game is None:
-            # A list in no game yet: a game of its own from this visit on.
+            # A list in no game yet: a game of its own from this visit on,
+            # and at once where it belongs — the linker (local, no network)
+            # joins it to the same game on another platform.
             game = await repo.adopt_list_as_game(platform, title_id)
+            if game is not None:
+                await GameLinker(repo).link_title(platform, title_id)
+                game = await repo.game_of_list(platform, title_id) or game
     if game is None:
         raise web.HTTPNotFound(text="game not found")
     return game
+
+
+async def _translating(collector: Any, game_id: int, locale: str) -> bool:
+    """Whether the game's description is on its way, starting it when not: the
+    page shows the text blurred and asks again."""
+    translator = collector.translator if collector is not None else None
+    if translator is None:
+        return False
+    return (await translator.pending(game_id, locale)).description
 
 
 async def handle_game_page(request: web.Request) -> web.Response:
@@ -89,16 +105,12 @@ async def handle_game_page(request: web.Request) -> web.Response:
             viewed = other
 
     versions = await repo.game_page_versions(game_id)
+    # Steam's poster and head of now, for the next look (never awaited).
+    steam_library_art.refresh_later(repo, versions)
     lists = await repo.game_page_lists(game_id)
     hltb_found = await repo.game_hltb(game_id)
     hltb_entry = hltb_found["entry"] if hltb_found else None
     art = game_page.art_of(versions, game_page.list_icons(lists))
-    if locale == "ru":
-        # No Russian story yet: Haiku translates the English once, for the
-        # next visit (#230).
-        game_descriptions.translate_later(
-            repo, request.app.get("mini_anthropic_auth"), versions, hltb_entry
-        )
 
     # Who here played it: the viewer, whom they follow, and the person it was
     # opened from — each only as far as their privacy lets the viewer see.
@@ -113,6 +125,13 @@ async def handle_game_page(request: web.Request) -> web.Response:
         if person == viewer or await _may_see_activity(repo, viewer, person)
     ]
     totals = {(row["platform"], str(row["title_id"])): int(row["total"] or 0) for row in lists}
+    # Which version a list is, so two lists of one platform tell apart
+    # (Xbox One and Xbox PC): its console and store, the plain version first.
+    list_console: dict[tuple[str, str], tuple[str, str]] = {}
+    for version in sorted(versions, key=lambda v: v.get("role") != "version"):
+        key = (str(version.get("platform") or ""), str(version.get("title_id") or ""))
+        if key[1] and key not in list_console:
+            list_console[key] = (str(version.get("console") or ""), str(version.get("store") or ""))
     players = []
     progress = None
     for row in await repo.game_players(game_id, visible):
@@ -128,12 +147,15 @@ async def handle_game_page(request: web.Request) -> web.Response:
             known = await repo.title_progress(
                 account_platform_of(one["platform"]), str(one["xuid"]), str(one["title_id"])
             )
+            console, store = list_console.get((one["platform"], str(one["title_id"])), ("", ""))
             played.append(
                 {
                     "count": known.unlocked if known else int(one["n"]),
                     "last": one["last"],
                     "platform": one["platform"],
                     "title_id": str(one["title_id"]),
+                    "console": console or None,
+                    "store": store or None,
                     "total": (known.total if known else None)
                     or totals.get((one["platform"], str(one["title_id"])))
                     or None,
@@ -171,12 +193,11 @@ async def handle_game_page(request: web.Request) -> web.Response:
                 {
                     "appid": appid,
                     "gid": post.gid,
-                    "title": post.title_ru if locale == "ru" and post.title_ru else post.title,
+                    "title": news_title(post, locale),
                     "date": post.published_at,
                     "kind": post.kind,
                     "image": post.image_url,
-                    "text": (post.text_ru if locale == "ru" and post.text_ru else post.text_en)
-                    or "",
+                    "text": news_text(post, locale),
                     "url": f"https://store.steampowered.com/news/app/{appid}/view/{post.gid}",
                 }
             )
@@ -226,6 +247,7 @@ async def handle_game_page(request: web.Request) -> web.Response:
             },
             "art": art,
             "description": game_page.description_of(versions, hltb_entry, locale),
+            "translating": await _translating(collector, game_id, locale),
             "genres": game_page.genres_of(versions, hltb_entry),
             "platforms": game_page.platforms_of(versions),
             "screenshots": game_page.screenshots_of(versions),

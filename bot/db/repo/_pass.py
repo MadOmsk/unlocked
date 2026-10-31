@@ -25,6 +25,9 @@ FIELDS = (
     "platform",
 )
 SEEDED = "pass_seeded"
+# The super-admins the environment named at the last start (#232).
+_ENV_SUPERADMINS = "env_superadmin_tg_ids"
+
 _TAKEN = (
     "(SELECT COUNT(*) FROM pass_item_codes c WHERE c.item_id = i.item_id"
     " AND c.claimed_at IS NOT NULL)"
@@ -44,6 +47,32 @@ def _pending(row: Any) -> dict[str, Any]:
 
 
 class _PassRepo:
+    async def wipe_pass_before(self, month: str, marker: str) -> dict[str, int]:
+        """Every theme and prize of the passes before `month` taken away, and
+        what each person got of them (TEMPORARY, owner, 2026-10-30; see
+        `services/season_reset.py`): the levels and their codes, the themes
+        claimed, the levels reached and the seasons' names, all of a month
+        before `month`; and `marker` set, in one step. A pass of `month` or
+        after, and what was claimed in it, stays."""
+        gone: dict[str, int] = {}
+        async with self.transaction():
+            old = "SELECT item_id FROM pass_items WHERE month IS NULL OR month < ?"
+            for table, where in (
+                ("pass_item_codes", f"item_id IN ({old})"),
+                ("pass_reached", "month < ?"),
+                ("pass_claims", "month < ?"),
+                ("pass_items", "month IS NULL OR month < ?"),
+                ("pass_seasons", "month < ?"),
+            ):
+                cursor = await self._conn.execute(f"DELETE FROM {table} WHERE {where}", (month,))
+                gone[table] = cursor.rowcount or 0
+            await self._conn.execute(
+                "INSERT INTO app_settings (key, value, updated_at) VALUES (?, '1', ?)"
+                " ON CONFLICT(key) DO UPDATE SET value = '1', updated_at = excluded.updated_at",
+                (marker, _now()),
+            )
+        return gone
+
     async def pass_claims(self, person_id: int) -> set[str]:
         cursor = await self._conn.execute(
             "SELECT palette FROM pass_claims WHERE person_id = ?", (person_id,)
@@ -53,8 +82,8 @@ class _PassRepo:
     async def set_pass_claim(self, person_id: int, palette: str, month: str, on: bool) -> None:
         if on:
             await self._conn.execute(
-                "INSERT OR IGNORE INTO pass_claims (person_id, palette, month, claimed_at)"
-                " VALUES (?, ?, ?, ?)",
+                "INSERT INTO pass_claims (person_id, palette, month, claimed_at)"
+                " VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING",
                 (person_id, palette, month, _now()),
             )
         else:
@@ -88,14 +117,15 @@ class _PassRepo:
         stays for whoever took a code of it, so the code is never lost."""
         cursor = await self._conn.execute(
             "SELECT i.*, COUNT(c.code_id) AS total,"
-            " COALESCE(SUM(c.code_id IS NOT NULL AND c.claimed_at IS NULL), 0) AS left_count,"
+            " COALESCE(SUM(CASE WHEN c.code_id IS NOT NULL AND c.claimed_at IS NULL THEN 1 ELSE"
+            " 0 END), 0) AS left_count,"
             " MAX(CASE WHEN c.person_id = ? THEN c.code END) AS mine"
             " FROM pass_items i LEFT JOIN pass_item_codes c ON c.item_id = i.item_id"
-            " WHERE i.state != 'draft' AND (? IS NULL OR i.month = ?)"
+            " WHERE i.state != 'draft' AND (?::text IS NULL OR i.month = ?)"
             " GROUP BY i.item_id"
-            " HAVING i.state = 'live' OR mine IS NOT NULL"
+            " HAVING i.state = 'live' OR MAX(CASE WHEN c.person_id = ? THEN c.code END) IS NOT NULL"
             " ORDER BY i.points, i.item_id",
-            (person_id, month, month),
+            (person_id, month, month, person_id),
         )
         return [dict(row) for row in await cursor.fetchall()]
 
@@ -109,35 +139,62 @@ class _PassRepo:
         return [row[0] for row in await cursor.fetchall()]
 
     async def pass_season(self, month: str) -> dict[str, Any]:
-        """A month's pass's name as shown, and as the editor has it."""
+        """A month's pass's name and cover as shown, and as the editor has them."""
         cursor = await self._conn.execute(
-            "SELECT title, draft, draft_title FROM pass_seasons WHERE month = ?", (month,)
+            "SELECT title, image_path, draft, draft_title, draft_image_path"
+            " FROM pass_seasons WHERE month = ?",
+            (month,),
         )
         row = await cursor.fetchone()
         title = row["title"] if row else None
+        image = row["image_path"] if row else None
         draft = bool(row and row["draft"])
         return {
             "title": title,
+            "image_path": image,
             "draft_title": row["draft_title"] if draft else title,
+            "draft_image_path": row["draft_image_path"] if draft else image,
             "changed": draft,
         }
 
+    async def _season_draft(self, month: str, field: str, value: str | None) -> str | None:
+        """One field of a month's draft set; the draft starts from what is shown.
+        Gives back the draft cover it replaced, when one goes unused."""
+        season = await self.pass_season(month)
+        async with self.transaction():
+            await self._conn.execute(
+                "INSERT INTO pass_seasons (month, draft, draft_title, draft_image_path)"
+                " VALUES (?, 1, ?, ?) ON CONFLICT(month) DO UPDATE SET draft = 1,"
+                " draft_title = excluded.draft_title,"
+                " draft_image_path = excluded.draft_image_path",
+                (month, season["draft_title"], season["draft_image_path"]),
+            )
+            await self._conn.execute(
+                f"UPDATE pass_seasons SET {field} = ? WHERE month = ?", (value, month)
+            )
+        old = season["draft_image_path"]
+        if field == "draft_image_path" and old and old not in (value, season["image_path"]):
+            return old
+        return None
+
     async def set_pass_season_title(self, month: str, title: str | None) -> None:
         """A month's pass's name changed, waiting for the month's publish."""
-        await self._conn.execute(
-            "INSERT INTO pass_seasons (month, draft, draft_title) VALUES (?, 1, ?)"
-            " ON CONFLICT(month) DO UPDATE SET draft = 1, draft_title = excluded.draft_title",
-            (month, title),
-        )
-        await self._conn.commit()
+        await self._season_draft(month, "draft_title", title)
+
+    async def set_pass_season_image(self, month: str, path: str | None) -> str | None:
+        """A month's pass's cover changed (None takes it off), waiting for the
+        month's publish. Gives back a draft picture no longer used, to delete."""
+        return await self._season_draft(month, "draft_image_path", path)
 
     async def pass_month_counts(self, months: list[str]) -> dict[str, dict[str, int]]:
-        """How many levels each month's pass has, and how many wait for its publish."""
+        """How many levels each month's pass has, how many wait for its publish,
+        and its name as the editor has it."""
         if not months:
             return {}
         marks = ",".join("?" * len(months))
         cursor = await self._conn.execute(
-            "SELECT month, COUNT(*), SUM(state = 'draft' OR pending IS NOT NULL)"
+            "SELECT month, COUNT(*), SUM(CASE WHEN state = 'draft' OR pending IS NOT NULL THEN"
+            " 1 ELSE 0 END)"
             f" FROM pass_items WHERE state != 'removed' AND month IN ({marks}) GROUP BY month",
             months,
         )
@@ -146,10 +203,14 @@ class _PassRepo:
             for row in await cursor.fetchall()
         }
         cursor = await self._conn.execute(
-            f"SELECT month FROM pass_seasons WHERE draft = 1 AND month IN ({marks})", months
+            "SELECT month, draft, CASE WHEN draft = 1 THEN draft_title ELSE title END"
+            f" FROM pass_seasons WHERE month IN ({marks})",
+            months,
         )
         for row in await cursor.fetchall():
-            counts.setdefault(row[0], {"levels": 0, "dirty": 0})["dirty"] += 1
+            entry = counts.setdefault(row[0], {"levels": 0, "dirty": 0})
+            entry["dirty"] += int(bool(row[1]))
+            entry["title"] = row[2]
         return counts
 
     async def pass_editor_items(self, month: str | None = None) -> list[dict[str, Any]]:
@@ -157,7 +218,7 @@ class _PassRepo:
         or waiting changes laid over each, how many have it, and its codes."""
         cursor = await self._conn.execute(
             f"SELECT i.*, {_TAKEN} AS taken FROM pass_items i WHERE i.state != 'removed'"
-            " AND (? IS NULL OR i.month = ?)"
+            " AND (?::text IS NULL OR i.month = ?)"
             " ORDER BY i.points, i.item_id",
             (month, month),
         )
@@ -197,10 +258,11 @@ class _PassRepo:
         async with self.transaction():
             cursor = await self._conn.execute(
                 "INSERT INTO pass_items (" + ", ".join(FIELDS) + ", month, state, created_by,"
-                " created_at) VALUES (" + ", ".join("?" * len(FIELDS)) + ", ?, 'draft', ?, ?)",
+                " created_at) VALUES (" + ", ".join("?" * len(FIELDS)) + ", ?, 'draft', ?, ?)"
+                " RETURNING item_id",
                 (*values, month, created_by, _now()),
             )
-            item_id = int(cursor.lastrowid)
+            item_id = int((await cursor.fetchone())[0])
             await self._conn.executemany(
                 "INSERT INTO pass_item_codes (item_id, code) VALUES (?, ?)",
                 [(item_id, code) for code in codes],
@@ -280,7 +342,7 @@ class _PassRepo:
         they alone held given back, to delete."""
         cursor = await self._conn.execute(
             "SELECT state, image_path, pending FROM pass_items"
-            " WHERE (state = 'draft' OR pending IS NOT NULL) AND (? IS NULL OR month = ?)",
+            " WHERE (state = 'draft' OR pending IS NOT NULL) AND (?::text IS NULL OR month = ?)",
             (month, month),
         )
         pictures = []
@@ -292,16 +354,24 @@ class _PassRepo:
                 pictures.append(waiting)
         async with self.transaction():
             await self._conn.execute(
-                "DELETE FROM pass_items WHERE state = 'draft' AND (? IS NULL OR month = ?)",
+                "DELETE FROM pass_items WHERE state = 'draft' AND (?::text IS NULL OR month = ?)",
                 (month, month),
             )
             await self._conn.execute(
-                "UPDATE pass_items SET pending = NULL WHERE (? IS NULL OR month = ?)",
+                "UPDATE pass_items SET pending = NULL WHERE (?::text IS NULL OR month = ?)",
                 (month, month),
             )
+            cursor = await self._conn.execute(
+                "SELECT image_path, draft_image_path FROM pass_seasons"
+                " WHERE draft = 1 AND (?::text IS NULL OR month = ?)",
+                (month, month),
+            )
+            for row in await cursor.fetchall():
+                if row["draft_image_path"] and row["draft_image_path"] != row["image_path"]:
+                    pictures.append(row["draft_image_path"])
             await self._conn.execute(
-                "UPDATE pass_seasons SET draft = 0, draft_title = NULL"
-                " WHERE (? IS NULL OR month = ?)",
+                "UPDATE pass_seasons SET draft = 0, draft_title = NULL, draft_image_path = NULL"
+                " WHERE (?::text IS NULL OR month = ?)",
                 (month, month),
             )
         return pictures
@@ -319,7 +389,7 @@ class _PassRepo:
             cursor = await self._conn.execute(
                 f"SELECT i.*, {_TAKEN} AS taken FROM pass_items i"
                 " WHERE (i.state = 'draft' OR i.pending IS NOT NULL)"
-                " AND (? IS NULL OR i.month = ?)",
+                " AND (?::text IS NULL OR i.month = ?)",
                 (month, month),
             )
             for row in [dict(r) for r in await cursor.fetchall()]:
@@ -365,10 +435,19 @@ class _PassRepo:
                 if codes is not None:
                     await self._replace_codes(item_id, codes)
                 changed += 1
-            # The pass's name waiting with the levels.
+            # The pass's name and cover waiting with the levels.
             cursor = await self._conn.execute(
-                "UPDATE pass_seasons SET title = draft_title, draft = 0, draft_title = NULL"
-                " WHERE draft = 1 AND (? IS NULL OR month = ?)",
+                "SELECT image_path, draft_image_path FROM pass_seasons"
+                " WHERE draft = 1 AND (?::text IS NULL OR month = ?)",
+                (month, month),
+            )
+            for row in await cursor.fetchall():
+                if row["image_path"] and row["image_path"] != row["draft_image_path"]:
+                    old_pictures.append(row["image_path"])
+            cursor = await self._conn.execute(
+                "UPDATE pass_seasons SET title = draft_title, image_path = draft_image_path,"
+                " draft = 0, draft_title = NULL, draft_image_path = NULL"
+                " WHERE draft = 1 AND (?::text IS NULL OR month = ?)",
                 (month, month),
             )
             changed += cursor.rowcount
@@ -429,8 +508,8 @@ class _PassRepo:
             fresh = [int(row[0]) for row in rows]
             now = _now()
             await self._conn.executemany(
-                "INSERT OR IGNORE INTO pass_reached (person_id, item_id, month, reached_at)"
-                " VALUES (?, ?, ?, ?)",
+                "INSERT INTO pass_reached (person_id, item_id, month, reached_at)"
+                " VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING",
                 [(person_id, item_id, month, now) for item_id in fresh],
             )
         return [int(row[0]) for row in rows if not row[1]]
@@ -446,6 +525,73 @@ class _PassRepo:
             (item_id,),
         )
         return [dict(row) for row in await cursor.fetchall()]
+
+    async def person_role(self, person_id: int) -> str | None:
+        """`superadmin`, `admin` or None (services/roles.py)."""
+        cursor = await self._conn.execute("SELECT role FROM users WHERE id = ?", (person_id,))
+        row = await cursor.fetchone()
+        return row[0] if row else None
+
+    async def set_person_role(self, person_id: int, role: str | None) -> None:
+        await self._conn.execute("UPDATE users SET role = ? WHERE id = ?", (role, person_id))
+        await self._conn.commit()
+
+    async def ensure_superadmins(self, tg_ids: Iterable[int]) -> None:
+        """The super-admins the environment names are super-admins here too;
+        one it named last start and names no more is one no longer (its
+        role was the environment's, never given in the app: a named one
+        cannot be given or taken one). The names are kept in `app_settings`."""
+        ids = sorted(set(tg_ids))
+        before = {
+            int(t)
+            for t in json.loads(await self.get_app_setting(_ENV_SUPERADMINS) or "[]")  # type: ignore[attr-defined]
+        }
+        async with self.transaction():  # type: ignore[attr-defined]
+            dropped = sorted(before - set(ids))
+            if dropped:
+                marks = ",".join("?" * len(dropped))
+                await self._conn.execute(
+                    "UPDATE users SET role = NULL"
+                    f" WHERE role = 'superadmin' AND tg_id IN ({marks})",
+                    dropped,
+                )
+            if ids:
+                marks = ",".join("?" * len(ids))
+                await self._conn.execute(
+                    f"UPDATE users SET role = 'superadmin' WHERE tg_id IN ({marks})", ids
+                )
+            await self.set_app_setting(_ENV_SUPERADMINS, json.dumps(ids))  # type: ignore[attr-defined]
+
+    async def pass_month_published(self, month: str) -> bool:
+        """Whether a month's pass has a live level: an empty one has not started."""
+        cursor = await self._conn.execute(
+            "SELECT 1 FROM pass_items WHERE month = ? AND state = 'live' LIMIT 1", (month,)
+        )
+        return await cursor.fetchone() is not None
+
+    async def mark_pass_seen(self, person_id: int, month: str) -> None:
+        await self._conn.execute(
+            "INSERT INTO pass_seen (person_id, month, seen_at) VALUES (?, ?, ?)"
+            " ON CONFLICT DO NOTHING",
+            (person_id, month, _now()),
+        )
+        await self._conn.commit()
+
+    async def pass_seen_in(self, person_id: int, month: str) -> bool:
+        cursor = await self._conn.execute(
+            "SELECT 1 FROM pass_seen WHERE person_id = ? AND month = ?", (person_id, month)
+        )
+        return await cursor.fetchone() is not None
+
+    async def mark_season_notified(self, person_id: int, month: str) -> bool:
+        """True for the one call that marks it: the one that tells them."""
+        cursor = await self._conn.execute(
+            "INSERT INTO season_notified (person_id, month, notified_at) VALUES (?, ?, ?)"
+            " ON CONFLICT DO NOTHING",
+            (person_id, month, _now()),
+        )
+        await self._conn.commit()
+        return cursor.rowcount > 0
 
     async def all_person_ids(self) -> list[int]:
         cursor = await self._conn.execute("SELECT id FROM users ORDER BY id")

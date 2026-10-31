@@ -12,6 +12,7 @@ from bot.db.repo._sql import (
     CHAT_MEMBERS,
     GLOBAL_DIGEST_THRESHOLD,
     GLOBAL_RARE_THRESHOLD,
+    HANDLE_SHOWN,
     PERSON_BY_TG,
 )
 from bot.i18n import DEFAULT_LOCALE, gettext
@@ -52,7 +53,7 @@ class _ChatsRepo:
             (chat_id, title, added_by, now),
         )
         await self._conn.execute(
-            "INSERT OR IGNORE INTO chat_settings (chat_id) VALUES (?)", (chat_id,)
+            "INSERT INTO chat_settings (chat_id) VALUES (?) ON CONFLICT DO NOTHING", (chat_id,)
         )
         await self._conn.commit()
 
@@ -62,7 +63,8 @@ class _ChatsRepo:
 
     async def subscribe(self, chat_id: int, person_id: int) -> None:
         await self._conn.execute(
-            "INSERT OR IGNORE INTO subscriptions (chat_id, person_id, created_at) VALUES (?, ?, ?)",
+            "INSERT INTO subscriptions (chat_id, person_id, created_at) VALUES (?, ?, ?)"
+            " ON CONFLICT DO NOTHING",
             (chat_id, person_id, utcnow_iso()),
         )
         await self._conn.commit()
@@ -125,15 +127,66 @@ class _ChatsRepo:
         await self._conn.commit()
 
     async def deactivate_chat(self, chat_id: int) -> None:
-        """Telegram answered 403 — the bot was kicked out (SPEC 5.5)."""
-        await self._conn.execute("UPDATE chats SET is_active = 0 WHERE chat_id = ?", (chat_id,))
+        """Telegram answered 403 — the bot was kicked out (SPEC 5.5). Its chat
+        admin goes with it (#232): whoever adds it back is the next one."""
+        async with self.transaction():
+            await self._conn.execute("UPDATE chats SET is_active = 0 WHERE chat_id = ?", (chat_id,))
+            await self._conn.execute("DELETE FROM chat_admins WHERE chat_id = ?", (chat_id,))
+
+    # ---------------------------------------------------------- chat admins
+
+    async def chat_admin(self, chat_id: int) -> int | None:
+        """The chat admin's Telegram id (#232), if the chat has one."""
+        cursor = await self._conn.execute(
+            "SELECT tg_id FROM chat_admins WHERE chat_id = ?", (chat_id,)
+        )
+        row = await cursor.fetchone()
+        return int(row["tg_id"]) if row else None
+
+    async def chats_admined_by(self, tg_id: int) -> list[int]:
+        """The chats this Telegram account admins — active ones only."""
+        cursor = await self._conn.execute(
+            "SELECT a.chat_id FROM chat_admins a JOIN chats c ON c.chat_id = a.chat_id "
+            "WHERE a.tg_id = ? AND c.is_active = 1",
+            (tg_id,),
+        )
+        return [int(row["chat_id"]) for row in await cursor.fetchall()]
+
+    async def set_chat_admin(self, chat_id: int, tg_id: int | None, granted_by: int | None) -> None:
+        """Makes `tg_id` the chat's one admin, or leaves it with none."""
+        if tg_id is None:
+            await self._conn.execute("DELETE FROM chat_admins WHERE chat_id = ?", (chat_id,))
+        else:
+            await self._conn.execute(
+                "INSERT INTO chat_admins (chat_id, tg_id, granted_by, granted_at) "
+                "VALUES (?, ?, ?, ?) ON CONFLICT(chat_id) DO UPDATE SET "
+                "tg_id = excluded.tg_id, granted_by = excluded.granted_by, "
+                "granted_at = excluded.granted_at",
+                (chat_id, tg_id, granted_by, utcnow_iso()),
+            )
         await self._conn.commit()
+
+    async def chat_admin_candidates(self, chat_id: int) -> list[tuple[int, int, str | None]]:
+        """Who the role may go to: the chat's known members — subscribed or
+        seen writing there — as (Telegram id, person id, nickname shown)."""
+        cursor = await self._conn.execute(
+            "SELECT u.tg_id, u.id AS person_id, " + HANDLE_SHOWN + " FROM users u "
+            "WHERE u.tg_id IS NOT NULL AND u.is_excluded = 0 AND ("
+            " u.id IN (SELECT person_id FROM subscriptions WHERE chat_id = ?)"
+            " OR u.tg_id IN (SELECT tg_id FROM chat_seen WHERE chat_id = ?)) "
+            "ORDER BY lower(u.handle_norm), u.id",
+            (chat_id, chat_id),
+        )
+        return [
+            (int(row["tg_id"]), int(row["person_id"]), row["handle"])
+            for row in await cursor.fetchall()
+        ]
 
     async def publication_targets(self, person_id: int) -> list[ChatTarget]:
         cursor = await self._conn.execute(
             "SELECT c.chat_id, c.title, s.muted_title_ids,"
             f"       {GLOBAL_RARE_THRESHOLD} AS rare_threshold_percent,"
-            "       s.daily_summary_time, s.tz_offset_min,"
+            "       s.daily_summary_time, s.tz_offset_min, s.tz_name,"
             "       s.flood_limit, s.flood_window_minutes, s.locale,"
             f"       {GLOBAL_DIGEST_THRESHOLD} AS digest_threshold,"
             "       COALESCE(us.rarity_mode, 'all') AS rarity_mode "
@@ -141,7 +194,7 @@ class _ChatsRepo:
             "JOIN chats c ON c.chat_id = sub.chat_id "
             "JOIN chat_settings s ON s.chat_id = c.chat_id "
             "LEFT JOIN user_settings us ON us.person_id = sub.person_id "
-            "WHERE sub.person_id = ? AND c.is_active = 1",
+            "WHERE sub.person_id = ? AND c.is_active = 1 AND s.publishing = 1",
             (person_id,),
         )
         return [
@@ -152,6 +205,7 @@ class _ChatsRepo:
                 rare_threshold_percent=row["rare_threshold_percent"],
                 daily_summary_time=row["daily_summary_time"],
                 tz_offset_min=row["tz_offset_min"],
+                tz_name=row["tz_name"],
                 flood_limit=row["flood_limit"],
                 flood_window_minutes=row["flood_window_minutes"],
                 locale=row["locale"],
@@ -176,7 +230,7 @@ class _ChatsRepo:
     async def get_chat_daily_settings(self, chat_id: int) -> ChatDailySettings:
         cursor = await self._conn.execute(
             f"SELECT {GLOBAL_RARE_THRESHOLD} AS rare_threshold_percent,"
-            " daily_summary_time, tz_offset_min, locale "
+            " daily_summary_time, tz_offset_min, tz_name, locale "
             "FROM chat_settings WHERE chat_id = ?",
             (chat_id,),
         )
@@ -191,6 +245,7 @@ class _ChatsRepo:
             daily_summary_time=row["daily_summary_time"],
             tz_offset_min=row["tz_offset_min"],
             locale=row["locale"],
+            tz_name=row["tz_name"],
         )
 
     async def active_group_chats(self) -> list[tuple[int, str]]:

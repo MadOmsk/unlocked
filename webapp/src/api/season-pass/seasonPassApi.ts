@@ -4,6 +4,13 @@ import { API_BASE_ROUTES } from "../../core/constants/routes";
 
 export type Look = "common" | "rare" | "legendary" | "mythic";
 
+/** A game a store lists: its name, a picture, and its id in each store. */
+export type StoreGameHit = {
+  name: string;
+  image: string | null;
+  stores: { store: "steam" | "xbox"; id: string }[];
+};
+
 export type PassTier = {
   id: number;
   level: number;
@@ -22,6 +29,8 @@ export type PassReward = {
   points: number;
   /** A game of ours (its card from the catalog), or a code for something else. */
   kind: "game" | "code";
+  /** Its look, a tier as a theme's; none on a prize made before, read as common. */
+  tier: Look | null;
   game: GameCard | null;
   /** The platform it is for, when said. */
   platform: string | null;
@@ -60,9 +69,11 @@ export type PassEditor = {
   /** The month whose pass is edited, and the months that may be: this one
    * and the ones ahead, each with its levels and the ones waiting to publish. */
   month: string;
-  months: { month: string; levels: number; dirty: number }[];
+  months: { month: string; levels: number; dirty: number; title: string | null }[];
   /** The month's pass's name as the draft has it, and whether it waits to publish. */
   title: string | null;
+  /** The month's cover as the draft has it. */
+  image: string | null;
   title_changed: boolean;
   /** What people score in a month: this month's best so far, last month's
    * best and middle among those who scored. */
@@ -89,6 +100,8 @@ export type PassState = {
   months: string[];
   /** The month's theme, its pass's name: "Хэллоуин". */
   title: string | null;
+  /** The month's cover: the page's colours are read from it, as a game's are. */
+  image: string | null;
 };
 
 /** A level as the editor sends it. */
@@ -124,6 +137,11 @@ export class PassApi extends BaseApi {
     return this.get<PassState>(initData, `/pass${query({ month: opts.month, edit: opts.edit })}`);
   }
 
+  /** The pass's own page was opened. */
+  markSeen(initData: string): Promise<unknown> {
+    return this.post<unknown>(initData, "/pass/seen", {});
+  }
+
   claim(initData: string, palette: string): Promise<PassState> {
     return this.post<PassState>(initData, "/pass/claim", { palette });
   }
@@ -134,6 +152,22 @@ export class PassApi extends BaseApi {
 
   takers(initData: string, id: number): Promise<{ ok: boolean; takers: PassTaker[] }> {
     return this.get<{ ok: boolean; takers: PassTaker[] }>(initData, `/pass/items/${id}/takers`);
+  }
+
+  /** The stores' own catalogs (Steam, Xbox) searched for a game our catalog
+   * lacks: one row a game, the ids it has in each store; a game we have is
+   * not among them. */
+  searchStoreGames(initData: string, q: string): Promise<{ ok: boolean; games: StoreGameHit[] }> {
+    return this.get<{ ok: boolean; games: StoreGameHit[] }>(initData, "/pass/game-search", { q });
+  }
+
+  /** A hit as a prize's game: ours when the catalog has it, else added by
+   * hand and filled in by the stores later. */
+  addGame(initData: string, hit: StoreGameHit): Promise<{ ok: boolean; made: boolean; game: GameCard }> {
+    return this.post<{ ok: boolean; made: boolean; game: GameCard }>(initData, "/pass/games", {
+      name: hit.name,
+      stores: hit.stores,
+    });
   }
 
   // The editor's calls name the month they edit (`edit`).
@@ -158,6 +192,19 @@ export class PassApi extends BaseApi {
     const headers: Record<string, string> = { "Content-Type": image.type || "image/jpeg" };
     if (initData !== WEB_SESSION) headers["X-Telegram-Init-Data"] = initData;
     const response = await fetch(this.buildUrl(`/pass/items/${id}/image${query({ edit })}`), { method: "PUT", headers, body: image });
+    if (!response.ok) throw new Error(`${response.status}: ${await response.text()}`);
+    return (await response.json()) as PassState;
+  }
+
+  /** The edited month's cover: the bytes as they are, saved again by the server; null takes it off. */
+  async seasonImage(initData: string, edit: string | null, image: Blob | null): Promise<PassState> {
+    const headers: Record<string, string> = image ? { "Content-Type": image.type || "image/jpeg" } : {};
+    if (initData !== WEB_SESSION) headers["X-Telegram-Init-Data"] = initData;
+    const response = await fetch(this.buildUrl(`/pass/season/image${query({ edit })}`), {
+      method: image ? "PUT" : "DELETE",
+      headers,
+      body: image ?? undefined,
+    });
     if (!response.ok) throw new Error(`${response.status}: ${await response.text()}`);
     return (await response.json()) as PassState;
   }

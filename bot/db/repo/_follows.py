@@ -50,7 +50,7 @@ class PersonRow:
 # the older queries, here keyed on the `p` alias.
 _SHOWN = (
     "CASE WHEN p.handle_number = 0 THEN p.handle"
-    " ELSE p.handle || '#' || printf('%04d', p.handle_number) END"
+    " ELSE p.handle || '#' || lpad(p.handle_number::text, 4, '0') END"
 )
 # Relation of `?` (the viewer) to `p`, as four columns.
 _RELATION = (
@@ -135,8 +135,8 @@ class _FollowsRepo:
             if available > utcnow():
                 raise FollowTooSoon(available.isoformat(timespec="seconds"))
         cursor = await self._conn.execute(
-            "INSERT OR IGNORE INTO follows (follower_id, followee_id, created_at) "
-            "SELECT ?, id, ? FROM users WHERE id = ?",
+            "INSERT INTO follows (follower_id, followee_id, created_at) "
+            "SELECT ?, id, ? FROM users WHERE id = ? ON CONFLICT DO NOTHING",
             (me, utcnow_iso(), other),
         )
         await self._conn.commit()
@@ -180,8 +180,8 @@ class _FollowsRepo:
         if me == other:
             return False
         cursor = await self._conn.execute(
-            "INSERT OR IGNORE INTO blocks (person_id, blocked_id, created_at) "
-            "SELECT ?, id, ? FROM users WHERE id = ?",
+            "INSERT INTO blocks (person_id, blocked_id, created_at) "
+            "SELECT ?, id, ? FROM users WHERE id = ? ON CONFLICT DO NOTHING",
             (me, utcnow_iso(), other),
         )
         await self._conn.execute(
@@ -375,6 +375,9 @@ class _FollowsRepo:
         with them or follow them (owner, 2026-10-03) — "everyone" never meant
         anybody who found the nickname."""
         if viewer == target:
+            return True
+        # A super-admin opens any person (owner, 2026-10-28).
+        if await self.person_role(viewer) == "superadmin":
             return True
         relation = await self.relation(viewer, target)
         if not can_view(await self.activity_visible(target), relation):

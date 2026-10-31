@@ -60,6 +60,8 @@ CREATE TABLE IF NOT EXISTS users (
     -- When a person with no email put off adding one (migration 083): the app
     -- asks once, on opening it.
     email_prompted_at TEXT,
+    -- superadmin / admin / NULL (140): who may run the app.
+    role            TEXT,
     created_at      TEXT NOT NULL,
     updated_at      TEXT NOT NULL,
     UNIQUE (handle_norm, handle_number),
@@ -130,6 +132,9 @@ CREATE TABLE IF NOT EXISTS user_settings (
                      CHECK (rarity_mode IN ('all', 'rare', 'hidden')),
     muted_title_ids  TEXT    NOT NULL DEFAULT '[]',
     tz_offset_min    INTEGER,                      -- minutes from UTC, NULL = global timezone
+    -- 145: the zone by place (`Europe/Vilnius`), read before the offset (owner,
+    -- 2026-10-30: a summer clock change follows by itself); NULL = the offset.
+    tz_name          TEXT,
     -- Whether other people's /stats and /who cards get a clickable link in
     -- this person's nickname (Follow-up 2026-09-06). Default off; the admin
     -- picks what new users start with via app_settings, same pattern as
@@ -195,10 +200,10 @@ CREATE TABLE IF NOT EXISTS chat_settings (
     -- 2026-10-08), app_settings['digest_threshold'].
     digest_threshold        INTEGER NOT NULL DEFAULT 3,
     daily_summary_time      TEXT    NOT NULL DEFAULT '20:00',
-    -- Offset, not a zone name — same reasoning as user_settings.tz_offset_min:
-    -- unambiguous, and Russia has had no DST since 2014 so a fixed offset
-    -- never drifts for this audience.
+    -- The offset a chat kept before it had a zone by place (`tz_name`, 145).
     tz_offset_min            INTEGER NOT NULL DEFAULT 180,
+    -- 145: the zone by place, read before the offset (as user_settings.tz_name).
+    tz_name                  TEXT DEFAULT 'Europe/Moscow',
     -- Anti-flood (2026-09-09 user request): once `flood_limit` achievements
     -- have been individually notified for the same person in this chat
     -- within `flood_window_minutes`, further ones stop posting on their own
@@ -213,8 +218,24 @@ CREATE TABLE IF NOT EXISTS chat_settings (
     -- so everything this bot broadcasts into a group needs one shared
     -- answer, set by an admin. A person's DMs follow user_settings.locale
     -- instead.
-    locale                   TEXT    NOT NULL DEFAULT 'ru'
+    locale                   TEXT    NOT NULL DEFAULT 'ru',
+    -- Achievements are posted here (owner, 2026-10-29; #232): the chat
+    -- admin's switch. `chats.is_active` is the bot's own (removed, added
+    -- back); this one nothing resets by itself.
+    publishing               INTEGER NOT NULL DEFAULT 1
 );
+
+-- A chat's admin (owner, 2026-10-29; #232; services/roles.py): one per chat,
+-- by Telegram id — they may never have used the app. Whoever adds the bot is
+-- it; removing the bot clears it; the admin hands it on, an app admin
+-- appoints or removes it.
+CREATE TABLE IF NOT EXISTS chat_admins (
+    chat_id    INTEGER PRIMARY KEY REFERENCES chats(chat_id) ON DELETE CASCADE,
+    tg_id      INTEGER NOT NULL,
+    granted_by INTEGER,
+    granted_at TEXT    NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_chat_admins_tg ON chat_admins(tg_id);
 
 -- Global settings the admin turns
 CREATE TABLE IF NOT EXISTS app_settings (
@@ -914,7 +935,9 @@ CREATE TABLE IF NOT EXISTS pass_seasons (
     month       TEXT PRIMARY KEY,
     title       TEXT,
     draft       INTEGER NOT NULL DEFAULT 0,
-    draft_title TEXT
+    draft_title TEXT,
+    image_path       TEXT,              -- its cover (139)
+    draft_image_path TEXT
 );
 
 -- The pass's levels a person reached, per month (134; owner, 2026-10-28):
@@ -971,6 +994,23 @@ CREATE TABLE IF NOT EXISTS passkeys (
 );
 CREATE INDEX IF NOT EXISTS idx_passkeys_person ON passkeys (person_id);
 
+-- A player's own PSN token (migration 142, #233): an NPSSO a person adds to one
+-- of their PSN accounts, opt-in; by account, gone when the account leaves its
+-- person. Fernet, never logged, never shown back.
+CREATE TABLE IF NOT EXISTS psn_tokens (
+    account_id       TEXT PRIMARY KEY,
+    person_id        INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    npsso_enc        BLOB NOT NULL,
+    status           TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'dead')),
+    verified_at      TEXT NOT NULL,
+    checked_at       TEXT,
+    dead_at          TEXT,
+    last_error       TEXT,
+    notify_count     INTEGER NOT NULL DEFAULT 0,
+    last_notified_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_psn_tokens_person ON psn_tokens (person_id);
+
 
 -- One-time sign-in codes sent by email (#162, migration 079). Only an HMAC of
 -- the code is kept; `person_id` is set when a signed-in person adds the address
@@ -1024,7 +1064,9 @@ CREATE TABLE IF NOT EXISTS push_subscriptions (
     user_agent  TEXT,
     created_at  TEXT NOT NULL,
     last_ok_at  TEXT,
-    failures    INTEGER NOT NULL DEFAULT 0
+    failures    INTEGER NOT NULL DEFAULT 0,
+    -- The app's address push was allowed on (143); NULL before it was kept.
+    origin      TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_push_subscriptions_person ON push_subscriptions (person_id);
 

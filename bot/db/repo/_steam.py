@@ -12,8 +12,6 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 
-import aiosqlite
-
 from bot.db.repo._sql import (
     STEAM_APP_OF_TITLE,
     earned_at,
@@ -22,6 +20,7 @@ from bot.db.repo._sql import (
     platform_is,
     titles_on,
 )
+from bot.db.repo._tx import GatedConnection
 from bot.util import looks_russian, utcnow_iso
 
 
@@ -51,6 +50,8 @@ class GameNewsRow:
     image_url: str | None
     platform: str
     title_id: str
+    title_ru: str | None
+    text_ru: str | None
     game: str
     game_ru: str | None
     game_en: str | None
@@ -72,7 +73,7 @@ class TitleSteam:
 
 
 class _SteamRepo:
-    _conn: aiosqlite.Connection
+    _conn: GatedConnection
 
     STEAM_APPID_ATTEMPTS = 3
 
@@ -197,11 +198,16 @@ class _SteamRepo:
                 (platform, title_id),
             )
         for achievement_id, (text, source) in tips.items():
-            column = "tip_ru" if looks_russian(text) else "tip_en"
+            column, other = ("tip_ru", "tip_en") if looks_russian(text) else ("tip_en", "tip_ru")
+            # A changed tip loses our translation of the old one, to be made
+            # again (`GuideTranslator`); the same text keeps it.
             await self._conn.execute(
-                f"UPDATE title_achievements SET {column} = ?, tip_source = ?"
+                f"UPDATE title_achievements SET {column} = ?, tip_source = ?,"
+                f"  {other} = CASE WHEN {column} IS NOT DISTINCT FROM ? THEN {other} END,"
+                f"  tip_translation = CASE WHEN {column} IS NOT DISTINCT FROM ?"
+                " THEN tip_translation END"
                 " WHERE platform = ? AND title_id = ? AND achievement_id = ?",
-                (text, source, platform, title_id, achievement_id),
+                (text, source, text, text, platform, title_id, achievement_id),
             )
         if complete:
             await self._conn.execute(
@@ -209,6 +215,51 @@ class _SteamRepo:
                 "AND title_id = ?",
                 (utcnow_iso(), platform, title_id),
             )
+        await self._conn.commit()
+
+    async def titles_with_untranslated_guides(self, limit: int) -> list[tuple[str, str]]:
+        """Games with a tip in one language only, `(platform, title_id)`."""
+        cursor = await self._conn.execute(
+            "SELECT DISTINCT platform, title_id FROM title_achievements"
+            " WHERE (tip_en IS NULL) <> (tip_ru IS NULL)"
+            " ORDER BY platform, title_id LIMIT ?",
+            (limit,),
+        )
+        return [(row["platform"], str(row["title_id"])) for row in await cursor.fetchall()]
+
+    async def untranslated_guides(
+        self, platform: str, title_id: str
+    ) -> list[tuple[str, str, str, str, str]]:
+        """A game's tips in one language only: `(achievement_id, the language it
+        is in, its name, its description, the tip)`, name and description in
+        that language where known."""
+        cursor = await self._conn.execute(
+            "SELECT achievement_id, tip_en, tip_ru, name_en, name_ru,"
+            "  description_en, description_ru FROM title_achievements"
+            " WHERE platform = ? AND title_id = ? AND (tip_en IS NULL) <> (tip_ru IS NULL)"
+            " ORDER BY achievement_id",
+            (platform, title_id),
+        )
+        found = []
+        for row in await cursor.fetchall():
+            lang = "en" if row["tip_en"] is not None else "ru"
+            other = "ru" if lang == "en" else "en"
+            name = row[f"name_{lang}"] or row[f"name_{other}"] or ""
+            about = row[f"description_{lang}"] or row[f"description_{other}"] or ""
+            found.append((row["achievement_id"], lang, name, about, row[f"tip_{lang}"]))
+        return found
+
+    async def set_guide_translation(
+        self, platform: str, title_id: str, achievement_id: str, *, of: str, lang: str, text: str
+    ) -> None:
+        """Our translation of a tip into `lang`, kept only while the tip it was
+        made from (`of`, in the other language) is still the tip."""
+        column, source = ("tip_ru", "tip_en") if lang == "ru" else ("tip_en", "tip_ru")
+        await self._conn.execute(
+            f"UPDATE title_achievements SET {column} = ?, tip_translation = 'llm'"
+            f" WHERE platform = ? AND title_id = ? AND achievement_id = ? AND {source} = ?",
+            (text, platform, title_id, achievement_id, of),
+        )
         await self._conn.commit()
 
     async def title_tips(
@@ -227,7 +278,8 @@ class _SteamRepo:
 
     async def save_game_patches(self, appid: int, patches: list[StoredPatch]) -> None:
         """What one read of the app's news found — new patches added, a changed
-        one updated (its translation kept), and the read time stamped."""
+        one updated (its translation dropped, to be made again from the new
+        text; owner, 2026-10-30), and the read time stamped."""
         now = utcnow_iso()
         for patch in patches:
             await self._conn.execute(
@@ -237,7 +289,13 @@ class _SteamRepo:
                 " ON CONFLICT(steam_appid, gid) DO UPDATE SET"
                 "  title = excluded.title, published_at = excluded.published_at,"
                 "  text_en = excluded.text_en, kind = excluded.kind,"
-                "  image_url = excluded.image_url",
+                "  image_url = excluded.image_url,"
+                "  title_ru = CASE WHEN game_patches.title IS NOT DISTINCT FROM excluded.title"
+                "    AND game_patches.text_en IS NOT DISTINCT FROM excluded.text_en"
+                "    THEN game_patches.title_ru END,"
+                "  text_ru = CASE WHEN game_patches.title IS NOT DISTINCT FROM excluded.title"
+                "    AND game_patches.text_en IS NOT DISTINCT FROM excluded.text_en"
+                "    THEN game_patches.text_ru END",
                 (
                     appid,
                     patch.gid,
@@ -256,6 +314,37 @@ class _SteamRepo:
         )
         await self._conn.commit()
 
+    async def patches_to_translate(
+        self, *, max_chars: int, limit: int, appid: int | None = None
+    ) -> list[tuple[int, str, str, str]]:
+        """Posts with no Russian yet (of one app, or of all), the newest first,
+        `(appid, gid, title, text)`; a post longer than `max_chars` stays English."""
+        cursor = await self._conn.execute(
+            "SELECT steam_appid, gid, title, COALESCE(text_en, '') AS text_en"
+            " FROM game_patches WHERE title_ru IS NULL"
+            "   AND LENGTH(COALESCE(text_en, '')) <= ?"
+            "   AND (?::bigint IS NULL OR steam_appid = ?)"
+            " ORDER BY published_at DESC LIMIT ?",
+            (max_chars, appid, appid, limit),
+        )
+        return [
+            (int(row["steam_appid"]), row["gid"], row["title"], row["text_en"])
+            for row in await cursor.fetchall()
+        ]
+
+    async def set_patch_translation(
+        self, appid: int, gid: str, *, of: tuple[str, str], title_ru: str, text_ru: str
+    ) -> None:
+        """A post's Russian, kept only while it is still the post `of` (its
+        title and text) — a re-read may have changed it meanwhile."""
+        title, text = of
+        await self._conn.execute(
+            "UPDATE game_patches SET title_ru = ?, text_ru = ?"
+            " WHERE steam_appid = ? AND gid = ? AND title = ? AND COALESCE(text_en, '') = ?",
+            (title_ru, text_ru, appid, gid, title, text),
+        )
+        await self._conn.commit()
+
     async def game_patch_gids(self, appid: int) -> set[str]:
         """The posts of the app already stored."""
         cursor = await self._conn.execute(
@@ -270,7 +359,9 @@ class _SteamRepo:
         of our games that is this app since `played_since`, with that game —
         `(person_id, platform, title_id, name_ru, name_en, name)`, one row each."""
         cursor = await self._conn.execute(
-            "SELECT al.person_id, MAX(s.platform) AS platform, s.title_id,"
+            # One row a person, the one of the greatest platform — the row
+            # SQLite's MAX() handed its bare columns from (#234).
+            "SELECT DISTINCT ON (al.person_id) al.person_id, s.platform, s.title_id,"
             "       t.name_ru, t.name_en, t.name"
             " FROM seen_achievements s"
             " JOIN account_links al ON al.platform = s.account_platform"
@@ -281,8 +372,7 @@ class _SteamRepo:
             "s.title_id"
             f" WHERE {STEAM_APP_OF_TITLE} = ?"
             f"  AND {earned_date_is_real('s.')} AND {earned_at('s.')} >= ?"
-            " GROUP BY al.person_id"
-            " ORDER BY al.person_id",
+            " ORDER BY al.person_id, s.platform DESC",
             (appid, played_since),
         )
         return [
@@ -326,13 +416,15 @@ class _SteamRepo:
             "  FROM played p JOIN achievement_list_connectors t ON t.platform = p.platform AND "
             "t.title_id = p.title_id"
             ") "
-            "SELECT gp.steam_appid, gp.gid, gp.kind, gp.title, gp.published_at,"
-            "       gp.text_en, gp.image_url, a.platform, a.title_id,"
+            # One card a post (DISTINCT ON), whichever of our games it is.
+            "SELECT * FROM (SELECT DISTINCT ON (gp.steam_appid, gp.gid)"
+            " gp.steam_appid, gp.gid, gp.kind, gp.title, gp.published_at,"
+            "       gp.text_en, gp.title_ru, gp.text_ru, gp.image_url, a.platform, a.title_id,"
             "       a.name, a.name_ru, a.name_en, a.icon_url "
             "FROM game_patches gp JOIN apps a ON a.appid = gp.steam_appid "
             "WHERE gp.published_at >= ? AND gp.published_at < ? "
-            "GROUP BY gp.steam_appid, gp.gid "
-            "ORDER BY gp.published_at DESC, gp.steam_appid, gp.gid "
+            "ORDER BY gp.steam_appid, gp.gid, a.platform, a.title_id) AS one_each "
+            "ORDER BY published_at DESC, steam_appid, gid "
             "LIMIT ?",
             (played_since, since, until, limit),
         )
@@ -347,6 +439,8 @@ class _SteamRepo:
                 image_url=row["image_url"],
                 platform=row["platform"],
                 title_id=str(row["title_id"]),
+                title_ru=row["title_ru"],
+                text_ru=row["text_ru"],
                 game=row["name"],
                 game_ru=row["name_ru"],
                 game_en=row["name_en"],
@@ -364,22 +458,25 @@ class _SteamRepo:
         if not game_ids:
             return []
         cursor = await self._conn.execute(
-            "WITH fav(game_id) AS (SELECT value FROM json_each(?)), apps AS ("
+            "WITH fav(game_id) AS (SELECT value::bigint FROM"
+            " jsonb_array_elements_text(?::jsonb)), apps AS ("
             "  SELECT f.game_id, CAST(v.product_id AS INTEGER) AS appid FROM fav f"
             "  JOIN versions v ON v.game_id = f.game_id WHERE v.store = 'steam'"
             "  UNION"
-            "  SELECT f.game_id, CAST(json_extract(j.value, '$[1]') AS INTEGER) FROM fav f"
-            "  JOIN versions v ON v.game_id = f.game_id, json_each(v.store_ids) j"
-            "  WHERE json_extract(j.value, '$[0]') = 'steam_twin'"
+            "  SELECT f.game_id, (j.value->>1)::bigint FROM fav f"
+            "  JOIN versions v ON v.game_id = f.game_id, jsonb_array_elements(v.store_ids::jsonb) j"
+            "  WHERE j.value->>0 = 'steam_twin'"
             ") "
-            "SELECT gp.steam_appid, gp.gid, gp.kind, gp.title, gp.published_at,"
-            "       gp.text_en, gp.image_url, MIN(a.game_id) AS game_id,"
+            # One card a post, of its smallest game id (as MIN() picked it).
+            "SELECT * FROM (SELECT DISTINCT ON (gp.steam_appid, gp.gid)"
+            " gp.steam_appid, gp.gid, gp.kind, gp.title, gp.published_at,"
+            "       gp.text_en, gp.title_ru, gp.text_ru, gp.image_url, a.game_id,"
             "       g.name AS game_name, g.name_ru AS game_name_ru "
             "FROM game_patches gp JOIN apps a ON a.appid = gp.steam_appid "
             "JOIN games g ON g.game_id = a.game_id "
             "WHERE gp.published_at >= ? AND gp.published_at < ? "
-            "GROUP BY gp.steam_appid, gp.gid "
-            "ORDER BY gp.published_at DESC, gp.steam_appid, gp.gid "
+            "ORDER BY gp.steam_appid, gp.gid, a.game_id) AS one_each "
+            "ORDER BY published_at DESC, steam_appid, gid "
             "LIMIT ?",
             (f"[{','.join(str(int(g)) for g in game_ids)}]", since, until, limit),
         )
@@ -405,6 +502,8 @@ class _SteamRepo:
                     image_url=row["image_url"],
                     platform=key[0],
                     title_id=str(key[1]),
+                    title_ru=row["title_ru"],
+                    text_ru=row["text_ru"],
                     game=row["game_name"],
                     game_ru=row["game_name_ru"],
                     game_en=row["game_name"],

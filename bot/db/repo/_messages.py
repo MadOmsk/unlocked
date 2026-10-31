@@ -352,9 +352,10 @@ class _MessagesRepo:
             + "AND t.title_id = s.title_id "
             + rarity_cache_join()
             + f"WHERE al.person_id IN ({owners}) {date_bound} "
-            "GROUP BY s.title_id, s.platform "
+            "GROUP BY s.title_id, s.platform, t.name, t.icon_url, t.platforms, t.name_ru,"
+            " t.name_en "
             f"{order_sql} LIMIT ?",
-            (rare_threshold, *person_ids, *date_params, limit or -1),
+            (rare_threshold, *person_ids, *date_params, limit or None),
         )
         return [
             GameAchievements(
@@ -418,7 +419,8 @@ class _MessagesRepo:
 
     async def mark_daily_report_sent(self, chat_id: int, report_date: str) -> None:
         await self._conn.execute(
-            "INSERT OR IGNORE INTO daily_reports (chat_id, report_date, sent_at) VALUES (?, ?, ?)",
+            "INSERT INTO daily_reports (chat_id, report_date, sent_at) VALUES (?, ?, ?)"
+            " ON CONFLICT DO NOTHING",
             (chat_id, report_date, utcnow_iso()),
         )
         await self._conn.commit()

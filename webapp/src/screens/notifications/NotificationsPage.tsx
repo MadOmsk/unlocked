@@ -51,7 +51,7 @@ export function NotificationsPage({ onClose, layer }: { onClose: () => void; lay
   const go = (item: NotificationItem) => {
     tick();
     if (!item.read) void markRead([item.id]);
-    if (item.kind === "pass_reward" || item.kind === "pass_level") {
+    if (item.kind === "pass_reward" || item.kind === "pass_level" || item.kind === "season_start") {
       open({ kind: "pass" });
     } else if (item.news) {
       open({
@@ -73,6 +73,7 @@ export function NotificationsPage({ onClose, layer }: { onClose: () => void; lay
       open({
         kind: "game",
         ref: {
+          game_id: item.game.game_id ?? undefined,
           platform: item.game.platform,
           title_id: item.game.title_id,
           name: item.game.name,
@@ -81,7 +82,7 @@ export function NotificationsPage({ onClose, layer }: { onClose: () => void; lay
       });
     } else if (item.person_id) {
       open({ kind: "person", personId: item.person_id });
-    } else if (item.kind === "xbox_login_dead") {
+    } else if (item.kind === "xbox_login_dead" || item.kind === "psn_token_dead") {
       open({ kind: "settings", pane: "accounts" });
     }
   };
@@ -102,7 +103,7 @@ export function NotificationsPage({ onClose, layer }: { onClose: () => void; lay
       {!list.data && list.loading && (
         <div className="group">
           <div className="group-items">
-            {Array.from({ length: 6 }, (_, i) => (
+            {[0, 1, 2].map((i) => (
               <span key={i} className="row skel" style={{ height: 72 }} />
             ))}
           </div>
@@ -131,7 +132,7 @@ export function NotificationsPage({ onClose, layer }: { onClose: () => void; lay
  * corner and the achievement's or the post's picture at the end. */
 function Moment({ item, onOpen }: { item: NotificationItem; onOpen: () => void }) {
   const { locale } = useApp();
-  const alert = item.kind === "xbox_login_dead";
+  const alert = item.kind === "xbox_login_dead" || item.kind === "psn_token_dead";
   const lead = item.person_id ? (
     <Face personId={item.person_id} name={item.name ?? "?"} size={44} />
   ) : item.cover ? (

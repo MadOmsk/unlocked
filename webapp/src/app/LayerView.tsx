@@ -13,9 +13,14 @@ const NotificationsPage = lazy(() => import("../screens/notifications/Notificati
 const FollowsPage = lazy(() => import("../screens/people/FollowsPage").then((m) => ({ default: m.FollowsPage })));
 const PersonPage = lazy(() => import("../screens/people/PersonPage").then((m) => ({ default: m.PersonPage })));
 const SearchPage = lazy(() => import("../screens/people/SearchPage").then((m) => ({ default: m.SearchPage })));
+const AddGamePage = lazy(() => import("../screens/home/AddGame").then((m) => ({ default: m.AddGamePage })));
 const ConnectPage = lazy(() => import("../screens/settings/Accounts").then((m) => ({ default: m.ConnectPage })));
+const PsnTokenPage = lazy(() => import("../screens/settings/PsnToken").then((m) => ({ default: m.PsnTokenPage })));
 const SettingsPage = lazy(() => import("../screens/settings/Settings").then((m) => ({ default: m.SettingsPage })));
 const GalleryPage = lazy(() => import("../screens/game/GalleryPage").then((m) => ({ default: m.GalleryPage })));
+const DlcPage = lazy(() => import("../screens/game/DlcPage").then((m) => ({ default: m.DlcPage })));
+const EditionPage = lazy(() => import("../screens/game/DlcPage").then((m) => ({ default: m.EditionPage })));
+const DlcDetailPage = lazy(() => import("../screens/game/DlcPage").then((m) => ({ default: m.DlcDetailPage })));
 const SeasonPassPage = lazy(() => import("../screens/season-pass/SeasonPassPage").then((m) => ({ default: m.SeasonPassPage })));
 const AchievementByRef = lazy(() => import("../screens/game/AchievementByRef").then((m) => ({ default: m.AchievementByRef })));
 
@@ -32,6 +37,7 @@ const LOADERS = [
   () => import("../screens/settings/Accounts"),
   () => import("../screens/settings/Settings"),
   () => import("../screens/game/GalleryPage"),
+  () => import("../screens/game/DlcPage"),
   () => import("../screens/game/AchievementByRef"),
   () => import("../screens/season-pass/SeasonPassPage"),
 ];
@@ -56,13 +62,19 @@ export function barShownOver(layer: Layer): boolean {
 function layerKey(layer: Layer): string {
   switch (layer.kind) {
     case "game":
-      return `game:${layer.ref.game_id ?? `${layer.ref.platform}:${layer.ref.title_id}`}`;
+      return `game:${layer.ref.game_id ?? `${layer.ref.platform}:${layer.ref.title_id}`}:${layer.ref.person?.person_id ?? ""}`;
     case "person":
       return `person:${layer.personId}`;
     case "achievement":
       return `ach:${layer.ach.key}`;
     case "gallery":
       return `gallery:${layer.game}`;
+    case "dlcs":
+      return `dlcs:${layer.game}`;
+    case "dlc":
+      return `dlc:${layer.game}:${layer.dlc.name}`;
+    case "edition":
+      return `edition:${layer.game}:${layer.edition.name}`;
     case "achievementRef":
       return `ach-ref:${layer.platform}:${layer.titleId}:${layer.achievementId}:${layer.person?.id ?? ""}`;
     case "achievements":
@@ -77,6 +89,8 @@ function layerKey(layer: Layer): string {
       return `follows:${layer.personId}:${layer.which}`;
     case "connect":
       return `connect:${layer.platform}`;
+    case "psn-token":
+      return `psn-token:${layer.accountId ?? "new"}`;
     default:
       return layer.kind;
   }
@@ -127,6 +141,12 @@ export function LayerView({
         return <AchievementPage ach={layer.ach} onClose={close} layer={key} />;
       case "gallery":
         return <GalleryPage game={layer.game} cover={layer.cover} videos={layer.videos} screenshots={layer.screenshots} onClose={close} layer={key} />;
+      case "dlcs":
+        return <DlcPage game={layer.game} gameNames={layer.gameNames} cover={layer.cover} dlcs={layer.dlcs} onClose={close} layer={key} />;
+      case "edition":
+        return <EditionPage game={layer.game} cover={layer.cover} edition={layer.edition} gameNames={layer.gameNames} dlcs={layer.dlcs} onClose={close} layer={key} />;
+      case "dlc":
+        return <DlcDetailPage game={layer.game} gameNames={layer.gameNames} cover={layer.cover} dlc={layer.dlc} onClose={close} layer={key} />;
       case "achievementRef":
         return (
           <AchievementByRef
@@ -150,10 +170,14 @@ export function LayerView({
         return <NotificationsPage onClose={close} layer={key} />;
       case "search":
         return <SearchPage onClose={close} layer={key} />;
+      case "addGame":
+        return <AddGamePage onClose={close} layer={key} />;
       case "settings":
         return <SettingsPage pane={layer.pane} onClose={close} layer={key} />;
       case "connect":
         return <ConnectPage platform={layer.platform} onClose={close} layer={key} />;
+      case "psn-token":
+        return <PsnTokenPage accountId={layer.accountId} onClose={close} layer={key} />;
       case "admin":
         return <AdminPage screen={layer.screen} onClose={close} layer={key} />;
     }

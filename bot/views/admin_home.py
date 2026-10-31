@@ -114,6 +114,16 @@ def usage_rows(status: AdminStatus, *, locale: str) -> list[tuple[str, str]]:
     ]
 
 
+def usage_by_credential(status: AdminStatus, *, locale: str) -> dict[str, str]:
+    """The load line of each credential that has one, for its own key screen
+    (#233): Steam, PSN, Anthropic and the mail login."""
+    rows = usage_rows(status, locale=locale)
+    names = ["xbox", "steam", "psn", "anthropic"] + (["octopus"] if status.octopus else [])
+    named = dict(zip(names, (value for _label, value in rows), strict=False))
+    named["smtp"] = rows[-1][1]
+    return named
+
+
 def _octopus_value(status: AdminStatus, _) -> str:
     """The octopus on one line (owner, 2026-10-25): on or off, its queue,
     how many it assembled in the last hour and day, the failures, the last."""
@@ -144,7 +154,10 @@ async def render_admin_home(
     credentials: AdminCredentials,
     *,
     locale: str,
+    keys: bool = True,
 ) -> tuple[str, InlineKeyboardMarkup]:
+    """The home; `keys` is the super-admin's alone (#232): an app admin's
+    has no «Ключи»."""
     _ = translator("adminview", locale)
     status = await admin_status(repo, credentials=credentials)
 
@@ -184,6 +197,7 @@ async def render_admin_home(
         psn_key_line=await key_line("psn", "adminview-psn-not-configured"),
         mail_line=f"{rows[-1][0]}: {rows[-1][1]}",
     )
+    keys_row = [InlineKeyboardButton(text=_("adminview-btn-keys"), callback_data="a:keys")]
     keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
             [
@@ -194,7 +208,7 @@ async def render_admin_home(
             ],
             [InlineKeyboardButton(text=_("adminview-btn-users"), callback_data="a:users:0")],
             [InlineKeyboardButton(text=_("adminview-btn-chats"), callback_data="a:chats")],
-            [InlineKeyboardButton(text=_("adminview-btn-keys"), callback_data="a:keys")],
         ]
+        + ([keys_row] if keys else [])
     )
     return text, keyboard

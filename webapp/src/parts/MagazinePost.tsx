@@ -3,7 +3,7 @@ import { useApp } from "../app/context";
 import { achOfFeed, isVeiled, pointsOf, rareLevel, TIER_NAME } from "../app/views";
 import { clockOf } from "../core/post-text";
 import { tick } from "../core/haptic";
-import { dayKey, num, pct, plural, t, timeAgo, type Locale } from "../i18n";
+import { dayKey, pct, plural, t, timeAgo, type Locale } from "../i18n";
 import { isWideArt } from "./AchRow";
 import { capital } from "./Months";
 import { type Post as PostData, type UnlockEvent } from "./posts";
@@ -11,6 +11,7 @@ import { Face } from "../ui/Face";
 import "./magazine.css";
 import { Icon } from "../ui/Icon";
 import { AchPic, Cover } from "../ui/Pic";
+import { Spark } from "./AchRow";
 
 /** Today and yesterday as how long ago — minutes, then hours (yesterday's
  * too, never "1 day") —; an older day by its clock, the day being its heading. */
@@ -53,6 +54,7 @@ export function MagazinePost({ post }: { post: PostData }) {
     open({
       kind: "game",
       ref: {
+        game_id: post.gameId ?? undefined,
         platform: post.platform,
         title_id: post.titleId,
         name: post.game,
@@ -74,12 +76,13 @@ export function MagazinePost({ post }: { post: PostData }) {
         <span className="mag-who">
           <span className="mag-names-row">
             <span className="mag-names t-label clamp-1">{post.people.map((p) => p.name).join(` ${tr("and")} `)}</span>
+            {/* When, on the name's own line. */}
+            <span className="mag-time">{when(item.unlocked_at, locale)}</span>
           </span>
           <button type="button" className="mag-sub clamp-1" onClick={openGame}>
             {post.game}
           </button>
         </span>
-        <span className="mag-time">{when(item.unlocked_at, locale)}</span>
       </header>
 
       <button type="button" className="mag-art" onClick={() => openEvent(lead)}>
@@ -89,19 +92,18 @@ export function MagazinePost({ post }: { post: PostData }) {
             <Icon name="handshake" size={22} />
           </span>
         )}
-        {(item.rarity_percent != null || tier) && (
-          <span className={`mag-badge shape-flower6 tile-badge-${tier ?? "plain"}`}>
-            {item.rarity_percent != null ? <b className="t-num">{pct(item.rarity_percent, locale)}</b> : <Icon name="trophy" size={22} />}
+        <span className={`mag-badge shape-flower6 tile-badge-${tier ?? "plain"}`}>
+            <b className="t-num flower-pts">
+              <Spark className="flower-spark" />
+              {pointsOf(item.rarity_percent, { trophy: item.trophy_type, mythic: item.mythic })}</b>
           </span>
-        )}
       </button>
 
       <button type="button" className="mag-body" onClick={() => openEvent(lead)}>
         <span className="mag-kicker">
-          <span className={`mag-tier${tier ? ` mark-${tier}` : ""}`}>{capital(tr(TIER_NAME[tier ?? "common"]))}</span>
-          <span className="mag-worth">
-            {num(pointsOf(item.rarity_percent, { trophy: item.trophy_type, mythic: item.mythic }), locale)}{" "}
-            {plural(locale, pointsOf(item.rarity_percent, { trophy: item.trophy_type, mythic: item.mythic }), ["ptsOne", "ptsFew", "ptsMany"])}
+          <span className={`mag-tier${tier ? ` mark-${tier}` : ""}`}>
+            {capital(tr(TIER_NAME[tier ?? "common"]))}
+            {item.rarity_percent != null && ` · ${pct(item.rarity_percent, locale)}`}
           </span>
         </span>
         <span className="mag-name t-card clamp-2">{veiled ? tr("secretAchievement") : item.name}</span>
@@ -152,7 +154,7 @@ export function MagazineNews({ item }: { item: NewsItem }) {
   };
   const openGame = () => {
     tick();
-    open({ kind: "game", ref: { platform: item.game.platform, title_id: item.game.title_id, name: item.game.name, icon_url: item.game.icon_url } });
+    open({ kind: "game", ref: { game_id: item.game.game_id ?? undefined, platform: item.game.platform, title_id: item.game.title_id, name: item.game.name, icon_url: item.game.icon_url } });
   };
   return (
     <article className="mag">
@@ -161,12 +163,14 @@ export function MagazineNews({ item }: { item: NewsItem }) {
           <Cover src={item.game.icon_url} className="mag-by-cover" />
         </button>
         <span className="mag-who">
-          <button type="button" className="mag-names t-label clamp-1" onClick={openGame}>
-            {item.game.name}
-          </button>
+          <span className="mag-names-row">
+            <button type="button" className="mag-names t-label clamp-1" onClick={openGame}>
+              {item.game.name}
+            </button>
+            <span className="mag-time">{when(item.date, locale)}</span>
+          </span>
           <span className="mag-sub clamp-1">{tr("magFromDevs")}</span>
         </span>
-        <span className="mag-time">{when(item.date, locale)}</span>
       </header>
       <button type="button" className="mag-art" onClick={openPost}>
         {item.image ? (

@@ -28,9 +28,25 @@ export type AdminCredential = {
   /** "active" / "invalid" where a health check watches it, else null. */
   status: string | null;
   checked_at: string | null;
+  /** Its load, worded as the bot's key screen words it (#233). */
+  usage?: string | null;
 };
 
-export type AdminKeys = { keys: AdminCredential[] };
+/** A player's own PSN token (#233): whose, which account, its state — never the token. */
+export type AdminPsnToken = {
+  account_id: string;
+  name: string;
+  person_id: number;
+  who: string;
+  status: "active" | "dead";
+  checked_at: string | null;
+  dead_at: string | null;
+};
+
+export type AdminKeys = {
+  keys: AdminCredential[];
+  psn_tokens?: { alive: number; dead: number; shared: number; accounts: AdminPsnToken[] };
+};
 
 export type AdminUserRow = {
   person_id: number;
@@ -41,6 +57,8 @@ export type AdminUserRow = {
   first_name: string | null;
   last_name: string | null;
   is_excluded: boolean;
+  /** The app role (#232): the list marks admins. */
+  role?: "user" | "admin" | "superadmin";
   last_online_at: string | null;
   today: number;
   month: number;
@@ -111,3 +129,12 @@ export type AdminActionStep = {
   confirm?: { text: string; yes: string; step: number };
   done?: AdminActionDone;
 };
+
+/** A chat's one admin (#232) and the chat's members the role may go to. */
+export interface AdminChatAdmin {
+  admin: { tg_id: number; name: string } | null;
+  candidates: Array<{ tg_id: number; person_id: number; name: string }>;
+  /** The chat admin themselves: handing the role on loses it. */
+  hand_on: boolean;
+  can_remove: boolean;
+}

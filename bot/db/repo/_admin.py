@@ -69,7 +69,7 @@ class _AdminRepo:
         was nowhere in the panel)."""
         cursor = await self._conn.execute(
             "SELECT u.tg_id, u.id AS person_id, u.username, u.first_name, " + HANDLE_SHOWN + ","
-            "       u.last_name, u.is_excluded, " + XBOX_COLUMNS + ","
+            "       u.last_name, u.is_excluded, u.role, " + XBOX_COLUMNS + ","
             "       u.last_online_at, t.status, t.last_refresh_at,"
             "       ps.external_id AS steam_id, ps.display_name AS steam_name,"
             "       ps.achievements_visible AS steam_achievements_visible,"
@@ -89,6 +89,7 @@ class _AdminRepo:
             AdminUserRow(
                 tg_id=row["tg_id"],
                 person_id=row["person_id"],
+                role=row["role"],
                 gamertag=row["gamertag"],
                 username=row["username"],
                 xuid=row["xuid"],
@@ -152,10 +153,11 @@ class _AdminRepo:
 
     async def admin_chats(self) -> list[ChatTarget]:
         cursor = await self._conn.execute(
-            "SELECT c.chat_id, c.title, c.is_active,"
+            "SELECT c.chat_id, c.title, c.is_active, s.publishing,"
             "       s.daily_summary, s.muted_title_ids,"
             f"       {GLOBAL_RARE_THRESHOLD} AS rare_threshold_percent,"
-            "       s.daily_summary_time, s.tz_offset_min, s.flood_limit, s.flood_window_minutes,"
+            "       s.daily_summary_time, s.tz_offset_min, s.tz_name,"
+            "       s.flood_limit, s.flood_window_minutes,"
             f"       s.locale, {GLOBAL_DIGEST_THRESHOLD} AS digest_threshold,"
             "       (SELECT COUNT(*) FROM subscriptions WHERE chat_id = c.chat_id) AS subs "
             "FROM chats c JOIN chat_settings s ON s.chat_id = c.chat_id "
@@ -169,12 +171,14 @@ class _AdminRepo:
                 rare_threshold_percent=row["rare_threshold_percent"],
                 daily_summary_time=row["daily_summary_time"],
                 tz_offset_min=row["tz_offset_min"],
+                tz_name=row["tz_name"],
                 flood_limit=row["flood_limit"],
                 flood_window_minutes=row["flood_window_minutes"],
                 locale=row["locale"],
                 digest_threshold=row["digest_threshold"],
                 is_active=bool(row["is_active"]),
                 daily_summary=bool(row["daily_summary"]),
+                publishing=bool(row["publishing"]),
                 subscribers=int(row["subs"]),
             )
             for row in await cursor.fetchall()
@@ -185,15 +189,20 @@ class _AdminRepo:
             "daily_summary",
             "daily_summary_time",
             "tz_offset_min",
+            "tz_name",
             "flood_limit",
             "flood_window_minutes",
             "locale",
+            "publishing",
         }
         unknown = set(fields) - allowed
         if unknown:
             raise ValueError(f"unknown chat_settings fields: {sorted(unknown)}")
         if not fields:
             return
+        # An offset set alone replaces the zone by place it would hide behind.
+        if "tz_offset_min" in fields and "tz_name" not in fields:
+            fields = {**fields, "tz_name": None}
         assignments = ", ".join(f"{name} = ?" for name in fields)
         await self._conn.execute(
             f"UPDATE chat_settings SET {assignments} WHERE chat_id = ?",
@@ -317,7 +326,8 @@ class _AdminRepo:
         "t.platform = 'xbox_modern' AND t.platforms IS NULL"
         f" AND t.platforms_attempts < {PLATFORMS_LOOKUP_ATTEMPTS}"
         " AND (t.platforms_checked_at IS NULL"
-        "      OR t.platforms_checked_at < strftime('%Y-%m-%dT%H:%M:%S', 'now', '-1 hour'))"
+        "      OR t.platforms_checked_at < to_char(now() AT TIME ZONE 'utc' - interval '1"
+        " hour', 'YYYY-MM-DD\"T\"HH24:MI:SS'))"
     )
 
     async def platforms_lookup_due(self, title_id: str) -> bool:
@@ -335,19 +345,20 @@ class _AdminRepo:
         unknown — the same "somebody here with a live token" owner the cover
         walker asks through, since titlehub answers only through a person's."""
         cursor = await self._conn.execute(
-            "SELECT t.title_id,"
+            # A subquery, so the owner it names can be filtered on (#234).
+            "SELECT title_id, owner FROM (SELECT t.title_id, t.platforms_checked_at,"
             "       (SELECT MIN(al.person_id) FROM seen_achievements s "
             "        JOIN account_links al ON al.platform = s.account_platform"
             "         AND al.external_id = s.xuid AND al.is_active = 1 "
             "        JOIN tokens tok ON tok.person_id = al.person_id AND tok.status = 'active' "
             "        JOIN users u ON u.id = al.person_id AND u.is_excluded = 0 "
             f"        WHERE {titles_on()}) AS owner "
-            f"FROM achievement_list_connectors t WHERE {self._PLATFORMS_DUE} "
+            f"FROM achievement_list_connectors t WHERE {self._PLATFORMS_DUE}) AS due "
             # Filtered before the LIMIT: a game nobody here can be asked about
             # must not take a place in the batch, or a head of such games
             # would stall the queue for good.
-            "AND owner IS NOT NULL "
-            "ORDER BY t.platforms_checked_at IS NOT NULL, t.platforms_checked_at "
+            "WHERE owner IS NOT NULL "
+            "ORDER BY platforms_checked_at IS NOT NULL, platforms_checked_at "
             "LIMIT ?",
             (limit,),
         )

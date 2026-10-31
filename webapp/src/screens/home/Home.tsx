@@ -75,7 +75,6 @@ export function Home({ refreshKey }: { refreshKey: number }) {
       Number(b.playing) - Number(a.playing) ||
       Number(b.state === "Online") - Number(a.state === "Online"),
   );
-  const followCount = following.data?.people.length ?? people.length;
   const mePresence = payload?.presence;
 
   return (
@@ -154,18 +153,15 @@ export function Home({ refreshKey }: { refreshKey: number }) {
         <section className="sec">
           <div className="sec-head">
             <h2 className="t-title">{tr("homeRecent")}</h2>
-            {recent.length > 0 && (
-              <button type="button" className="link-btn" onClick={() => open({ kind: "person", personId: me.person_id })}>
-                {tr("seeAll")}
-              </button>
-            )}
           </div>
           {payload && recent.length === 0 ? (
             <Empty icon="trophy" title={tr("emptyTitleNow")} text={tr("emptyHomeHint")} />
           ) : (
             <div className="rail">
-              {(payload ? recent : Array.from({ length: 3 }, () => null)).map((item, i) =>
-                item ? <AchTile key={`${item.title_id}:${item.achievement_id}`} ach={achOfFeed(item)} /> : <span key={i} className="tile tile-skel skel" />,
+              {payload ? (
+                recent.map((item) => <AchTile key={`${item.title_id}:${item.achievement_id}`} ach={achOfFeed(item)} />)
+              ) : (
+                [0, 1, 2].map((i) => <span key={i} className="tile tile-skel skel" />)
               )}
             </div>
           )}
@@ -177,7 +173,7 @@ export function Home({ refreshKey }: { refreshKey: number }) {
           <h2 className="t-title">{tr("homeNow")}</h2>
           {people.length > 0 && (
             <button type="button" className="link-btn" onClick={() => open({ kind: "follows", personId: null, which: "following" })}>
-              {tr("seeAll")} {followCount}
+              {tr("seeAll")}
             </button>
           )}
         </div>
@@ -214,7 +210,7 @@ export function Home({ refreshKey }: { refreshKey: number }) {
                 </button>
               );
             })}
-            {!online.data && Array.from({ length: 4 }, (_, i) => <span key={i} className="now-skel skel shape-cookie12" />)}
+            {!online.data && [0, 1, 2, 3].map((i) => <span key={i} className="now-skel skel shape-cookie12" />)}
           </div>
         )}
       </section>
@@ -223,6 +219,11 @@ export function Home({ refreshKey }: { refreshKey: number }) {
         <section className="sec">
           <div className="sec-head">
             <h2 className="t-title">{tr("homeGamesOf").replace("{month}", monthName(month, locale))}</h2>
+            {me.role === "superadmin" && (
+              <button type="button" className="link-btn" onClick={() => open({ kind: "addGame" })}>
+                {tr("addGameButton")}
+              </button>
+            )}
           </div>
           {monthPayload && games.length === 0 ? (
             <Empty icon="gamepad" title={capital(formatMonth(month, locale, "sheet"))} text={tr("emptyTitlePast")} />
@@ -236,7 +237,8 @@ export function Home({ refreshKey }: { refreshKey: number }) {
         <div className="sec-head">
           <h2 className="t-title">{tr("gpFavoritesTitle")}</h2>
         </div>
-        <FavoriteGames games={favs.data?.games ?? []} hint={favs.data ? tr("gpFavoritesEmpty") : undefined} />
+        {/* The hint only while there is nothing to show. */}
+        <FavoriteGames games={favs.data?.games ?? []} hint={favs.data && !favs.data.games.length ? tr("gpFavoritesEmpty") : undefined} />
       </section>
     </div>
   );

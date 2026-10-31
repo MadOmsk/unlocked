@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import asyncio
-import shutil
+import os
+import selectors
 import socket
+import sys
 from collections.abc import AsyncIterator, Iterator
 from pathlib import Path
 
-import aiosqlite
+import psycopg
 import pytest
 from aiogram_i18n import I18nContext
 from aiogram_i18n.cores.fluent_runtime_core import FluentRuntimeCore
@@ -15,14 +17,14 @@ from cryptography.fernet import Fernet
 
 from bot.config import Settings
 from bot.db.repo import Database, Repo
-from bot.db.repo._games_db import GAMES_DB_KEY
+from bot.db.repo._games_db import GAMES
 from bot.i18n import DEFAULT_LOCALE, LOCALES_DIR
 from bot.poller import fetcher, psn_fetcher, steam_fetcher, steam_localization
 from bot.services import game_art, title_catalog
 from bot.services.crypto import TokenCipher
 from bot.services.steam import achievements as steam_achievements
 from bot.services.steam.auth import SteamAuth
-from bot.services.stores import xbox_catalog
+from bot.services.stores import steam_store, xbox_catalog
 
 FERNET_KEY = Fernet.generate_key().decode()
 
@@ -44,6 +46,10 @@ async def _nothing(*args, **kwargs) -> None:
 
 async def _no_addons(name: str) -> list[str]:
     return []
+
+
+async def _no_art(appids: list[str]) -> dict:
+    return {}
 
 
 @pytest.fixture(autouse=True)
@@ -71,6 +77,9 @@ def _offline(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     # An Xbox collection also searches the add-ons sold alone: the errand of
     # `test_xbox_addons_alone`, which stubs it again.
     monkeypatch.setattr(xbox_catalog, "search_addons", _no_addons)
+    # A Steam collection also asks for the library art of now: the errand of
+    # `test_steam_library_art`, which stubs it again.
+    monkeypatch.setattr(steam_store, "library_art", _no_art)
     # A game's art kept on disk: `test_game_art`'s errand; signing stays off
     # (another test's app setup would otherwise leave it on for the rest).
     monkeypatch.setattr(game_art, "ensure", _nothing)
@@ -80,48 +89,96 @@ def _offline(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
         pytest.fail(f"reached for the network: {sorted(set(reached))}", pytrace=False)
 
 
-def _games_of(db_path: Path) -> Path:
-    return db_path.with_name(db_path.stem + ".games.db")
+# The tests' own PostgreSQL database (#234): its schema is made once a run,
+# and every table is emptied before each test. TEST_DATABASE_URL names it;
+# on the dev machine that is the project's cluster on port 5433.
+TEST_DATABASE_URL = os.environ.get(
+    "TEST_DATABASE_URL", "postgresql://localhost:5433/unlocked_tests?user=postgres"
+)
+TEST_SCHEMA = "app"
+
+
+def _admin_url(url: str) -> str:
+    """The same server, its maintenance database."""
+    head, _, tail = url.rpartition("/")
+    _name, sep, query = tail.partition("?")
+    return f"{head}/postgres{sep}{query}"
+
+
+def _event_loop() -> asyncio.AbstractEventLoop:
+    if sys.platform == "win32":
+        return asyncio.SelectorEventLoop(selectors.SelectSelector())
+    return asyncio.new_event_loop()
 
 
 @pytest.fixture(scope="session")
-def _db_template(tmp_path_factory: pytest.TempPathFactory) -> Path:
-    template_dir = tmp_path_factory.mktemp("db_template")
-    template_path = template_dir / "template.db"
+def event_loop_policy() -> asyncio.AbstractEventLoopPolicy:
+    # psycopg's async mode needs a selector loop; Windows defaults to the
+    # proactor one.
+    if sys.platform == "win32":
+        return asyncio.WindowsSelectorEventLoopPolicy()
+    return asyncio.DefaultEventLoopPolicy()
+
+
+# Every table emptied and every id counter back at 1, in one call: a TRUNCATE
+# of the eighty tables took most of a second a test.
+_RESET_FUNCTION = f"""
+CREATE OR REPLACE FUNCTION public.reset_test_data() RETURNS void LANGUAGE plpgsql AS $$
+DECLARE r record;
+BEGIN
+  SET LOCAL session_replication_role = replica;
+  FOR r IN SELECT schemaname, tablename FROM pg_tables
+           WHERE schemaname IN ('{TEST_SCHEMA}', '{GAMES}') AND tablename <> 'schema_migrations'
+  LOOP
+    EXECUTE format('DELETE FROM %I.%I', r.schemaname, r.tablename);
+  END LOOP;
+  FOR r IN SELECT schemaname, sequencename FROM pg_sequences
+           WHERE schemaname IN ('{TEST_SCHEMA}', '{GAMES}')
+  LOOP
+    EXECUTE format('ALTER SEQUENCE %I.%I RESTART', r.schemaname, r.sequencename);
+  END LOOP;
+END $$;
+"""
+
+
+@pytest.fixture(scope="session")
+def _db_template() -> str:
+    """The test database, made empty with today's schema, once a run."""
 
     async def _init() -> None:
-        # Two files, as on the servers (#229): every test runs against the
-        # catalog attached from a games database of its own.
-        db = await Database(template_path, games=_games_of(template_path)).connect()
+        name = TEST_DATABASE_URL.rpartition("/")[2].partition("?")[0]
+        admin = await psycopg.AsyncConnection.connect(
+            _admin_url(TEST_DATABASE_URL), autocommit=True
+        )
+        try:
+            await admin.execute(f'DROP DATABASE IF EXISTS "{name}" WITH (FORCE)')
+            await admin.execute(f'CREATE DATABASE "{name}"')
+        finally:
+            await admin.close()
+        db = await Database(TEST_DATABASE_URL, schema=TEST_SCHEMA).connect()
+        await db.conn.executescript(_RESET_FUNCTION)
         await db.close()
 
-    asyncio.run(_init())
-    return template_path
+    asyncio.run(_init(), loop_factory=_event_loop)
+    return TEST_DATABASE_URL
 
 
 @pytest.fixture
-async def database(tmp_path: Path, _db_template: Path) -> AsyncIterator[Database]:
-    db_path = tmp_path / "test.db"
-    shutil.copyfile(_db_template, db_path)
-    games_path = _games_of(db_path)
-    shutil.copyfile(_games_of(_db_template), games_path)
-    db = Database(db_path)
-    db._conn = await aiosqlite.connect(db_path)
-    db._conn.row_factory = aiosqlite.Row
-    await db._conn.execute("PRAGMA journal_mode = WAL")
-    await db._conn.execute("PRAGMA foreign_keys = ON")
-    await db._conn.execute("PRAGMA synchronous = OFF")
-    await db._conn.execute("ATTACH DATABASE ? AS games", (str(games_path),))
-    await db._conn.execute("PRAGMA games.journal_mode = WAL")
-    await db._conn.execute("PRAGMA games.synchronous = OFF")
-    await db._conn.execute(
-        "UPDATE app_settings SET value = ? WHERE key = ?", (str(games_path), GAMES_DB_KEY)
-    )
-    await db._conn.commit()
-    db.games_path = games_path
+async def database(tmp_path: Path, _db_template: str) -> AsyncIterator[Database]:
+    db = await Database(_db_template, schema=TEST_SCHEMA, data_dir=tmp_path).connect()
+    await db.conn.executescript("BEGIN; SELECT public.reset_test_data(); COMMIT;")
+    await db._seed_app_settings()
     try:
         yield db
     finally:
+        # A background task a test left (a backfill, a notice) must not be
+        # waiting on the connection as it closes: Windows' selector loop fails
+        # on a socket closed under it.
+        current = asyncio.current_task()
+        leftover = [t for t in asyncio.all_tasks() if t is not current and not t.done()]
+        for task in leftover:
+            task.cancel()
+        await asyncio.gather(*leftover, return_exceptions=True)
         await db.close()
 
 

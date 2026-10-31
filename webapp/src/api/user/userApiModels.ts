@@ -24,6 +24,11 @@ export type PsnAccount = {
   visibility: string;
   achievements_visible: boolean | null;
   profile_url: string | null;
+  /** The account's own token (#233): its state, never the token. */
+  token?: "active" | "dead" | null;
+  token_since?: string | null;
+  token_checked_at?: string | null;
+  token_dead_at?: string | null;
 };
 
 export type AccountPlatform = "xbox" | "psn" | "steam";
@@ -109,11 +114,19 @@ export type MeResponse = {
   username: string | null;
   first_name: string | null;
   last_name: string | null;
+  /** May open the admin panel and the pass's editor: an admin or a super-admin. */
   is_superadmin: boolean;
+  /** Who may run the app (owner, 2026-10-28); only a super-admin gives roles. */
+  role?: "user" | "admin" | "superadmin";
+  /** Admins a group chat (#232): the admin panel opens, to their chats only. */
+  chat_admin?: boolean;
   is_excluded: boolean;
   settings: {
     locale: string;
     tz_offset_min: number | null;
+    /** The time zone by place (`Europe/Vilnius`), and how it reads now. */
+    tz_name?: string | null;
+    tz_label?: string | null;
     show_profile_links: boolean;
     show_secrets: boolean;
     /** Which achievements go out, in every chat (#126). */
@@ -192,9 +205,13 @@ export type MeResponse = {
   publication: { excluded: boolean; chat_titles: string[] };
 };
 
+/** A time zone the picker offers: its place, and its offset now. */
+export type TimeZoneChoice = { id: string; name: string | null; offset: number; label: string };
+
 export type UserSettingsPatch = Partial<{
   locale: string;
   tz_offset_min: number | null;
+  tz_name: string;
   show_profile_links: boolean;
   show_secrets: boolean;
   rarity_mode: string;

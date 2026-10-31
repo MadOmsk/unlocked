@@ -14,6 +14,7 @@ from aiogram.enums import ChatType, ParseMode
 from aiogram.filters import (
     IS_MEMBER,
     IS_NOT_MEMBER,
+    BaseFilter,
     ChatMemberUpdatedFilter,
     Command,
     CommandObject,
@@ -34,8 +35,8 @@ from bot.db.repo import (
     Repo,
     User,
 )
-from bot.handlers.admin import IsSuperadmin
 from bot.poller.online_refresh import refresh_interval_minutes
+from bot.services import roles
 from bot.services.admin_settings import DEFAULT_RECENT_LIMIT
 from bot.services.message_log import stats_category
 from bot.services.naming import (
@@ -324,7 +325,7 @@ async def stats(
         return
 
     settings_row = await repo.get_user_settings(await repo.person_id(target.tg_id))
-    tz_offset_min = settings_row.tz_offset_min if settings_row else None
+    tz_offset_min = settings_row.tz if settings_row else None
     now_local = local_now(tz_offset_min)
     markup = stats_navigation_keyboard(
         target.tg_id,
@@ -368,7 +369,7 @@ async def _run_online(message: Message, repo: Repo, bot: Bot, i18n: I18nContext)
     # list and starts being a second keyboard once a chat has more than a
     # few people. Picking someone to look up is /who's job, not this one's.
     settings_row = await repo.get_chat_daily_settings(message.chat.id)
-    updated_label = local_now(settings_row.tz_offset_min).strftime("%H:%M")
+    updated_label = local_now(settings_row.tz).strftime("%H:%M")
     text = render_online_table(rows, updated_label, settings_row.locale)
     with stats_category():
         sent = await message.answer(
@@ -447,7 +448,7 @@ async def who_stats_button(
         text = await build_stats_text(repo, target, callback.message.chat.id, i18n)
         if text is not None:
             settings_row = await repo.get_user_settings(await repo.person_id(target.tg_id))
-            tz_offset_min = settings_row.tz_offset_min if settings_row else None
+            tz_offset_min = settings_row.tz if settings_row else None
             now_local = local_now(tz_offset_min)
             markup = stats_navigation_keyboard(
                 target.tg_id,
@@ -491,9 +492,9 @@ async def _summary(
         repo,
         chat_id,
         settings_row.rare_threshold_percent,
-        local_now(settings_row.tz_offset_min).date(),
+        local_now(settings_row.tz).date(),
         locale=settings_row.locale,
-        tz_offset_min=settings_row.tz_offset_min,
+        tz_offset_min=settings_row.tz,
         window=window,
     )
     return built if built is not None else (None, None)
@@ -579,7 +580,7 @@ async def stats_nav_callback(callback: CallbackQuery, repo: Repo, i18n: I18nCont
         return
 
     settings_row = await repo.get_user_settings(await repo.person_id(target.tg_id))
-    tz_offset_min = settings_row.tz_offset_min if settings_row else None
+    tz_offset_min = settings_row.tz if settings_row else None
     now_local = local_now(tz_offset_min)
     markup = stats_navigation_keyboard(
         target.tg_id,
@@ -614,7 +615,7 @@ async def stats_cal_callback(callback: CallbackQuery, repo: Repo, i18n: I18nCont
         return
 
     settings_row = await repo.get_user_settings(await repo.person_id(target.tg_id))
-    tz_offset_min = settings_row.tz_offset_min if settings_row else None
+    tz_offset_min = settings_row.tz if settings_row else None
     now_local = local_now(tz_offset_min)
     markup = stats_month_calendar_keyboard(
         target.tg_id,
@@ -647,7 +648,7 @@ async def summary_month_nav_callback(
         settings_row.rare_threshold_percent,
         target_date,
         locale=settings_row.locale,
-        tz_offset_min=settings_row.tz_offset_min,
+        tz_offset_min=settings_row.tz,
         window=MONTH,
     )
     await callback.answer()
@@ -672,7 +673,7 @@ async def summary_month_cal_callback(
     year = int(parts[2])
 
     settings_row = await repo.get_chat_daily_settings(callback.message.chat.id)
-    now_local = local_now(settings_row.tz_offset_min)
+    now_local = local_now(settings_row.tz)
     markup = summary_month_calendar_keyboard(
         year,
         now_local.year,
@@ -701,7 +702,7 @@ async def summary_day_nav_callback(callback: CallbackQuery, repo: Repo, i18n: I1
         settings_row.rare_threshold_percent,
         target_date,
         locale=settings_row.locale,
-        tz_offset_min=settings_row.tz_offset_min,
+        tz_offset_min=settings_row.tz,
         window=DAY,
     )
     await callback.answer()
@@ -724,7 +725,7 @@ async def summary_day_cal_callback(callback: CallbackQuery, repo: Repo, i18n: I1
     target_date = date.fromisoformat(parts[2])
 
     settings_row = await repo.get_chat_daily_settings(callback.message.chat.id)
-    now_date = local_now(settings_row.tz_offset_min).date()
+    now_date = local_now(settings_row.tz).date()
     markup = summary_day_calendar_keyboard(
         target_date,
         now_date,
@@ -760,7 +761,7 @@ async def summary_show_all(callback: CallbackQuery, repo: Repo, i18n: I18nContex
         callback.message.chat.id,
         settings_row.rare_threshold_percent,
         window,
-        settings_row.tz_offset_min,
+        settings_row.tz,
         locale=settings_row.locale,
         target_year=target_year,
         target_month=target_month,
@@ -915,10 +916,13 @@ async def promo_command(message: Message, bot: Bot, i18n: I18nContext, settings:
 async def greet_new_chat(
     event: ChatMemberUpdated, repo: Repo, bot: Bot, i18n: I18nContext, settings: Settings
 ) -> None:
-    """Say what to do the moment the bot lands in a group, not later."""
+    """Say what to do the moment the bot lands in a group, not later.
+    Whoever added it is the chat's admin (#232) — every time, so a group
+    whose bot is stuck fixes it itself by adding it again."""
     if event.chat.type not in GROUP_TYPES:
         return
     await repo.upsert_chat(event.chat.id, event.chat.title, event.from_user.id)
+    await repo.set_chat_admin(event.chat.id, event.from_user.id, None)
     me = await bot.me()
     await bot.send_message(
         event.chat.id,
@@ -926,6 +930,14 @@ async def greet_new_chat(
         parse_mode=ParseMode.HTML,
         reply_markup=_hub_markup(me.username or "", event.chat.id, i18n, settings),
     )
+
+
+@router.my_chat_member(ChatMemberUpdatedFilter(member_status_changed=IS_MEMBER >> IS_NOT_MEMBER))
+async def left_chat(event: ChatMemberUpdated, repo: Repo) -> None:
+    """The bot was removed: the chat is off, and its admin goes (#232)."""
+    if event.chat.type not in GROUP_TYPES:
+        return
+    await repo.deactivate_chat(event.chat.id)
 
 
 @router.callback_query(F.data == "sub:on")
@@ -1039,13 +1051,24 @@ async def hub_summary_month_callback(
     await _run_summary_command(callback.message, repo, bot, i18n, window=MONTH)
 
 
-@router.message(Command("delete_last"), F.chat.type.in_(GROUP_TYPES), IsSuperadmin())
+class ChatAdminHere(BaseFilter):
+    """This chat's admin, or an app admin (#232) — the bot's own roles, not
+    Telegram's chat administrators."""
+
+    async def __call__(self, message: Message, settings: Settings, repo: Repo) -> bool:
+        if message.from_user is None:
+            return False
+        access = await roles.access_of(repo, settings, message.from_user.id)
+        return access.chat(message.chat.id)
+
+
+@router.message(Command("delete_last"), F.chat.type.in_(GROUP_TYPES), ChatAdminHere())
 async def delete_last(message: Message, repo: Repo, bot: Bot, i18n: I18nContext) -> None:
     """Quick undo, right in the chat — the admin panel's own "стереть
     сообщения бота" (admin.py's a:cwipe) is a 24-hour bulk wipe reached
     through a private-chat menu, overkill for "oops, wrong one just now".
-    IsSuperadmin (admin.py) is the bot's own superadmin_tg_ids, same as everywhere
-    else "admin" means in this project — not generic Telegram chat admins.
+    For the chat's admin and the app's admins (#232): the whole «Сообщения»
+    of the chat card is theirs.
 
     Targets the bot's newest message whatever it is, except an achievement
     notification, which it never deletes (#101, owner).

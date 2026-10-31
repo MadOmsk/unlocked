@@ -112,7 +112,7 @@ async def build_stats_text(
     show_links = bool(await repo.get_int_setting(SHOW_LINKS_KEY, int(SHOW_LINKS_DEFAULT)))
 
     locale = _locale_of(i18n)
-    tz_offset_min = settings_row.tz_offset_min if settings_row else None
+    tz_offset_min = settings_row.tz if settings_row else None
     rare_threshold = (await repo.get_chat_daily_settings(chat_id)).rare_threshold_percent
     counters = await counters_for(
         repo,
@@ -264,6 +264,10 @@ def _recent_row(row: RecentAchievement, i18n: I18nContext | None = None) -> str:
     )
 
 
+# `?start=chatadm<chat id>`: the hub's «Управление чатом» (#232).
+CHAT_ADMIN_PAYLOAD = "chatadm"
+
+
 def hub_keyboard(
     bot_username: str,
     chat_id: int,
@@ -346,6 +350,16 @@ def hub_keyboard(
                     text=_hub_text(i18n, "chat-hub-publish-button"), callback_data="sub:on"
                 ),
                 settings_btn,
+            ]
+        )
+        # The chat admin's way to its settings and messages (#232): a link
+        # into the DM, where only the chat admin (or an app admin) gets in.
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=_hub_text(i18n, "chat-hub-manage-button"),
+                    url=f"https://t.me/{bot_username}?start={CHAT_ADMIN_PAYLOAD}{chat_id}",
+                )
             ]
         )
     else:

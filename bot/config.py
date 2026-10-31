@@ -34,6 +34,11 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("superadmin_tg_ids", "admin_tg_ids"),
     )
 
+    # Tokens of the bots this one replaced (#238), comma-separated: the Mini
+    # App opened from their posts arrives signed with their token. Never used
+    # to poll or send.
+    legacy_bot_tokens: Annotated[list[SecretStr], NoDecode] = Field(default_factory=list)
+
     # Microsoft / Azure
     azure_client_id: str
     azure_client_secret: SecretStr
@@ -106,6 +111,16 @@ class Settings(BaseSettings):
     catchup_idle_threshold_days: int = 14
     catchup_idle_interval_minutes: int = 1440  # 24 hours
 
+    # PostgreSQL (#234): the database, and this server's own schema in it —
+    # `prod`, `test`, `dev`; the games catalog is the schema `games`, shared.
+    database_url: str = "postgresql://localhost:5433/unlocked?user=postgres"
+    database_schema: str = "dev"
+    # Whether an empty schema may be made into a new database on start-up. Off:
+    # on a server an empty schema means the import has not run (#234), and a bot
+    # coming up on it would start over with nobody in it.
+    database_new_ok: bool = False
+    # Where the server keeps its files: the lock beside it, the advisers'
+    # answers. Its name is what it was when it was the database's file.
     db_path: Path = Path("data/bot.db")
     # The games database's pictures, shared by prod and the test server
     # (`services/media.py`); unset, they stay under `data/`.
@@ -125,6 +140,20 @@ class Settings(BaseSettings):
         if isinstance(value, str):
             return [int(part) for part in value.split(",") if part.strip()]
         return value
+
+    @field_validator("legacy_bot_tokens", mode="before")
+    @classmethod
+    def _split_legacy_tokens(cls, value: object) -> object:
+        """LEGACY_BOT_TOKENS is a comma-separated string in .env."""
+        if isinstance(value, str):
+            return [part.strip() for part in value.split(",") if part.strip()]
+        return value
+
+    def mini_app_tokens(self) -> list[str]:
+        """The tokens whose Mini App signature is accepted, this bot's first."""
+        return [self.bot_token.get_secret_value()] + [
+            token.get_secret_value() for token in self.legacy_bot_tokens
+        ]
 
     def is_superadmin(self, tg_id: int | None) -> bool:
         return tg_id is not None and tg_id in self.superadmin_tg_ids

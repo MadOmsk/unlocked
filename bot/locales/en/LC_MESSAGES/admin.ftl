@@ -7,8 +7,8 @@ admin-back = ‹ Back
 admin-cancel = Cancel
 admin-yes = yes
 admin-no = no
-admin-active = active
-admin-inactive = disabled
+admin-active = in the chat
+admin-inactive = not in the chat
 
 # Runtime settings
 admin-setting-summary-rows = Rows in /summary
@@ -27,6 +27,14 @@ admin-setting-email-provider-daily = The mail service's daily limit
 admin-setting-email-sends-total = Email codes in total an hour
 admin-setting-email-checks-client = Code checks per IP in 10 minutes
 admin-setting-patch-refresh = Game patch refresh (hours)
+admin-setting-translation-batch = Translation: games in a batch
+admin-translation-queue-on = 🌐 Translation queue is off — switch on
+admin-translation-queue-on-confirm = Switch the translation queue on? It spends money on the model by itself.
+admin-translation-queue-on-yes = Yes, switch on
+admin-translation-queue-off = 🌐 Translation queue is on — switch off
+admin-translation-queue-now-on = The translation queue is on
+admin-translation-queue-now-off = The translation queue is off
+admin-setting-translation-interval = Translation: every how many minutes
 admin-setting-octopus-per-tick = Games the octopus assembles (a minute)
 
 # The settings registry (#176, services/admin_registry.py): one label per
@@ -49,7 +57,7 @@ admin-post-picture-size-original = Original (no card)
 admin-post-picture-off = As it is
 admin-post-picture-color = On the icon's colour
 admin-post-picture-cover = On the game's cover
-admin-setting-chat-active = Chat on
+admin-setting-chat-publishing = Publishing in the chat
 admin-setting-chat-locale = Language
 admin-setting-chat-tz = Time zone
 admin-setting-digest = Digest from
@@ -62,6 +70,20 @@ admin-group-global-newcomers = New people
 admin-group-global-lists = Lists
 admin-group-global-hltb = HLTB
 admin-group-global-timers = Timers
+admin-group-global-poll_xbox = Status polling: Xbox
+admin-group-global-poll_steam = Status polling: Steam
+admin-group-global-poll_psn = Status polling: PlayStation
+admin-setting-poll-in-game = In a game (min)
+admin-setting-poll-online = Online, no game (min)
+admin-setting-poll-offline = Offline (min)
+admin-setting-poll-idle = Offline for long (min)
+admin-setting-poll-idle-after = "For long" — after (min offline)
+admin-setting-poll-dormant = Dormant account (min)
+admin-setting-poll-dormant-after = "Dormant" — after (days offline)
+admin-setting-poll-scan-online = Trophy scan: online (min)
+admin-setting-poll-scan-offline = Trophy scan: offline (min)
+admin-setting-poll-scan-dormant = Trophy scan: dormant (min)
+admin-setting-poll-shared-slowdown = Without a personal token: rarer by (times)
 admin-group-global-mail = Mail
 admin-group-global-other = Other
 admin-group-chat-main = General
@@ -80,27 +102,27 @@ admin-settings-zero-hint = { " " }0 — { $meaning }.
 admin-settings-saved = ✅ { $label }: { $value }
 admin-settings-choice-retry = No such value — pick one with a button.
 
-# A place in each of the zones people here live in — the Mini App's
-# admin shows it beside the offset; the bot shows the offset alone.
-admin-tz-place-m480 = Los Angeles
-admin-tz-place-m300 = New York
-admin-tz-place-p0 = London
-admin-tz-place-p60 = Berlin
-admin-tz-place-p120 = Kaliningrad
-admin-tz-place-p180 = Moscow
-admin-tz-place-p240 = Samara
-admin-tz-place-p300 = Yekaterinburg
-admin-tz-place-p360 = Omsk
-admin-tz-place-p420 = Novosibirsk
-admin-tz-place-p480 = Irkutsk
-admin-tz-place-p540 = Yakutsk
-admin-tz-place-p600 = Vladivostok
-admin-tz-place-p660 = Magadan
-admin-tz-place-p720 = Kamchatka
-
 # Platform keys (#17; Anthropic added 2026-09-09 — achievement-description
 # translation only, same admin-settable-shared-credential shape)
 admin-keys-title = 🔑 Platform keys
+admin-keys-tap = Tap a key: its state, check, load and actions are inside.
+admin-keys-personal-button = 👥 Personal PSN tokens · { $alive } ✅ · { $dead } ⚠️
+admin-keys-back = ‹ Keys
+admin-key-title = 🔑 <b>{ $label }</b>
+admin-key-status-alive = Status: ✅ working
+admin-key-status-dead = Status: ⚠️ not working
+admin-key-status-unset = Status: ⚪️ not set
+admin-key-checked = Checked: { $ago }
+admin-key-usage = Requests: { $usage }
+admin-key-psn-reads = Reads: { $shared } accounts without a personal token and the games catalog · personal tokens: { $alive } ✅ · { $dead } ⚠️
+admin-psntok-title = 👥 <b>Personal PSN tokens</b>
+admin-psntok-alive = ✅ <b>{ $name }</b> — { $who }, checked { $ago }
+admin-psntok-dead = ⚠️ <b>{ $name }</b> — { $who }, not working { $ago }, the owner was told
+admin-psntok-none = Nobody has added a personal token yet.
+admin-psntok-note = The tokens themselves are shown to nobody. Without a personal token: { $shared } accounts (polled less often — see «Status polling: PlayStation»).
+admin-psn-token-shared = Token: shared (polled less often)
+admin-psn-token-alive = Token: 🔑 personal ✅ (checked { $ago })
+admin-psn-token-dead = Token: 🔑 personal ⚠️ not working ({ $ago })
 admin-keys-line = { $label }: { $state }
 admin-keys-psn-label = PSN
 admin-keys-steam-label = Steam
@@ -242,6 +264,7 @@ admin-promo-confirm-yes = 📢 Yes, send it
 admin-promo-failed = Couldn't send the promo — the bot may not be in the chat.
 admin-action-unknown = That action isn't available now.
 admin-action-section-messages = Bot messages
+admin-action-section-timers = Translation queue
 admin-action-section-rules = Notification check
 
 # New users and user cards
@@ -340,8 +363,10 @@ admin-chat-list-row = { $mark }{ $title } · { $subscribers }
 admin-chat-card =
     💬 { $title }
 
-    State:         { $state }
-    Publishing:    { $subscribers } people
+    Bot:           { $state }
+    Publishing:    { $publishing }
+    Subscribed:    { $subscribers } people
+    Chat admin:    { $admin }
     Daily summary: { $summary }, at { $time }
     Timezone:      { $offset }
     Anti-flood:    { $flood }
@@ -363,3 +388,49 @@ admin-default-player = Player
 admin-note-excluded =   excluded
 admin-note-invalid =   login expired
 admin-note-revoked =   unsubscribed
+
+## Chat admins (#232)
+admin-on = on
+admin-off = off
+admin-chat-admin-none = none
+admin-chat-admin-button = 👤 Chat admin ▸
+admin-chat-admin-pick =
+    👤 Chat admin: { $admin }
+
+    Who gets the role? Listed are those subscribed to the chat or who wrote in it.
+admin-chat-admin-hand-on =
+    👤 You are this chat's admin.
+
+    Who gets the role? You will lose it. Listed are those subscribed to the chat or who wrote in it.
+admin-chat-admin-nobody = Nobody to give the role to yet: a person has to subscribe to the chat or write in it.
+admin-chat-admin-remove = ✖️ Remove the admin
+admin-chat-admin-confirm = Make { $name } the admin of «{ $title }»?
+admin-chat-admin-confirm-hand-on = Hand the admin role of «{ $title }» to { $name }? You will lose it.
+admin-chat-admin-confirm-yes = Yes
+admin-chat-admin-remove-confirm = Take the chat admin role of «{ $title }» from { $name }?
+admin-chat-admin-set = The chat admin is now { $name }.
+admin-chat-admin-removed = The chat has no admin now.
+admin-chat-admin-handed-on = Done: { $name } is now the admin of «{ $title }».
+admin-chat-admin-you =
+    👤 You are now the admin of «{ $title }».
+
+    Its settings and messages are in /admin, or under «Manage the chat» in the group's /panel.
+admin-chat-admin-only = Only for the chat admin
+admin-not-allowed = That's not for you.
+admin-chats-mine-empty = You don't admin any chat yet.
+
+## Roles (#232)
+admin-role = Role: { $role }
+admin-role-user = user
+admin-role-admin = app admin
+admin-role-superadmin = super-admin
+admin-role-make_admin = ⭐ Make an admin
+admin-role-make_superadmin = 👑 Make a super-admin
+admin-role-unmake_admin = Remove the admin role
+admin-role-unmake_superadmin = Remove super-admin (keep admin)
+admin-role-make_admin-confirm = Make { $name } an app admin? They get the people, chats, settings and the season pass — not the keys, not deleting.
+admin-role-make_superadmin-confirm = Make { $name } a super-admin? They get everything: keys, deleting people, roles.
+admin-role-unmake_admin-confirm = Take the app admin role from { $name }?
+admin-role-unmake_superadmin-confirm = Take super-admin from { $name }? They stay an app admin.
+admin-role-confirm-yes = Yes
+admin-role-done = Role: { $role }

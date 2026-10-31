@@ -1,4 +1,4 @@
-import type { GameRef, NewsItem } from "../api";
+import type { GameDlc, GameEdition, GameRef, NewsItem } from "../api";
 import type { AdminScreen } from "../core/constants";
 import type { Video } from "../ui/VideoPlayer";
 
@@ -7,6 +7,8 @@ export type AchView = {
   key: string;
   name: string;
   description: string | null;
+  /** Its Russian is on its way: the text shows blurred until it is in. */
+  translating?: boolean;
   icon: string | null;
   rarity: number | null;
   gamerscore: number | null;
@@ -20,6 +22,8 @@ export type AchView = {
   achievementId: string;
   game: string | null;
   gameIcon: string | null;
+  /** The catalog's game, what a tap on the game opens. */
+  gameId?: number | null;
   person: { id: number; name: string } | null;
   /** Everybody who earned it together, the first of them `person`. */
   together?: { id: number; name: string; at: string | null }[];
@@ -49,11 +53,21 @@ export type Layer =
       cover?: string | null;
       person: { id: number; name: string } | null;
       /** The other platforms the person played the game on, to switch to. */
-      lists?: { platform: string; title_id: string; count?: number; total?: number | null }[];
+      lists?: { platform: string; title_id: string; count?: number; total?: number | null; console?: string | null; store?: string | null }[];
     }
   | { kind: "achievement"; ach: AchView }
   | { kind: "pass" }
   | { kind: "gallery"; game: string; cover: string | null; videos: Video[]; screenshots: string[] }
+  | { kind: "dlcs"; game: string; gameNames: Array<string | null | undefined>; cover: string | null; dlcs: GameDlc[] }
+  | {
+      kind: "edition";
+      game: string;
+      cover: string | null;
+      edition: GameEdition;
+      gameNames: Array<string | null | undefined>;
+      dlcs: GameDlc[];
+    }
+  | { kind: "dlc"; game: string; gameNames: Array<string | null | undefined>; cover: string | null; dlc: GameDlc }
   | {
       kind: "achievementRef";
       platform: string;
@@ -72,8 +86,11 @@ export type Layer =
     }
   | { kind: "notifications" }
   | { kind: "search" }
+  | { kind: "addGame" }
   | { kind: "settings"; pane: SettingsPaneName }
   | { kind: "connect"; platform: "steam" | "psn" }
+  /** A PSN account's own token (#233); `accountId` null links a new account by one. */
+  | { kind: "psn-token"; accountId: string | null }
   | { kind: "admin"; screen: AdminScreen | null };
 
 export type Tab = "home" | "feed" | "summary";

@@ -99,8 +99,9 @@ class _MergeRepo:
         async with self.transaction():
             # Checked at commit, not per statement: a Telegram id moving from one
             # row to the other is briefly nobody's, and `chat_seen` points at it.
-            # The pragma lasts for the open transaction only, so it goes inside.
-            await conn.execute("PRAGMA defer_foreign_keys = ON")
+            # It lasts for the open transaction only, so it goes inside; every
+            # foreign key is DEFERRABLE (bot/db/pg/*.sql) for this.
+            await conn.execute("SET CONSTRAINTS ALL DEFERRED")
             # Whose Xbox account stays decides whose Xbox login stays with it.
             cursor = await conn.execute(
                 "SELECT person_id FROM account_links"
@@ -139,7 +140,7 @@ class _MergeRepo:
             # The Xbox login belongs to the Xbox account that stays; a login with
             # no account behind it any more goes.
             await conn.execute(
-                "DELETE FROM tokens WHERE person_id IN (?, ?) AND person_id IS NOT ?",
+                "DELETE FROM tokens WHERE person_id IN (?, ?) AND person_id IS DISTINCT FROM ?",
                 (keep, absorb, xbox_side),
             )
             await conn.execute("UPDATE tokens SET person_id = :keep WHERE person_id = :absorb", a)
@@ -152,54 +153,85 @@ class _MergeRepo:
                 a,
             )
             await conn.execute(
-                "UPDATE OR IGNORE account_links SET person_id = :keep WHERE person_id = :absorb", a
+                # Every link the kept person has no twin of: the same account, or
+                # an active one of the platform (one per platform but PSN).
+                "UPDATE account_links SET person_id = :keep WHERE person_id = :absorb"
+                " AND NOT EXISTS (SELECT 1 FROM account_links o WHERE o.person_id = :keep"
+                "  AND o.platform = account_links.platform"
+                "  AND (o.external_id = account_links.external_id"
+                "   OR (account_links.is_active = 1 AND o.is_active = 1"
+                "       AND account_links.platform <> 'psn')))",
+                a,
             )
 
             # ------------------------------------------- chats and people
             await conn.execute(
-                "INSERT OR IGNORE INTO subscriptions (chat_id, person_id, created_at)"
-                " SELECT chat_id, :keep, created_at FROM subscriptions WHERE person_id = :absorb",
+                "INSERT INTO subscriptions (chat_id, person_id, created_at)"
+                " SELECT chat_id, :keep, created_at FROM subscriptions WHERE person_id = :absorb"
+                " ON CONFLICT DO NOTHING",
                 a,
             )
             for column, other in (("follower_id", "followee_id"), ("followee_id", "follower_id")):
                 await conn.execute(
-                    f"INSERT OR IGNORE INTO follows ({column}, {other}, created_at)"
+                    f"INSERT INTO follows ({column}, {other}, created_at)"
                     f" SELECT :keep, {other}, created_at FROM follows"
-                    f" WHERE {column} = :absorb AND {other} != :keep",
+                    f" WHERE {column} = :absorb AND {other} != :keep ON CONFLICT DO NOTHING",
                     a,
                 )
             for column, other in (("person_id", "blocked_id"), ("blocked_id", "person_id")):
                 await conn.execute(
-                    f"INSERT OR IGNORE INTO blocks ({column}, {other}, created_at)"
+                    f"INSERT INTO blocks ({column}, {other}, created_at)"
                     f" SELECT :keep, {other}, created_at FROM blocks"
-                    f" WHERE {column} = :absorb AND {other} != :keep",
+                    f" WHERE {column} = :absorb AND {other} != :keep ON CONFLICT DO NOTHING",
                     a,
                 )
             await conn.execute(
-                "INSERT OR IGNORE INTO favorite_games (person_id, game_id, anchor_key, created_at)"
+                "INSERT INTO favorite_games (person_id, game_id, anchor_key, created_at)"
                 " SELECT :keep, game_id, anchor_key, created_at FROM favorite_games"
-                " WHERE person_id = :absorb",
+                " WHERE person_id = :absorb ON CONFLICT DO NOTHING",
                 a,
             )
             await conn.execute(
-                "INSERT OR IGNORE INTO pass_claims (person_id, palette, month, claimed_at)"
+                "INSERT INTO pass_claims (person_id, palette, month, claimed_at)"
                 " SELECT :keep, palette, month, claimed_at FROM pass_claims"
-                " WHERE person_id = :absorb",
+                " WHERE person_id = :absorb ON CONFLICT DO NOTHING",
                 a,
             )
             await conn.execute(
-                "INSERT OR IGNORE INTO pass_reached (person_id, item_id, month, reached_at)"
+                "INSERT INTO pass_seen (person_id, month, seen_at)"
+                " SELECT :keep, month, seen_at FROM pass_seen"
+                " WHERE person_id = :absorb ON CONFLICT DO NOTHING",
+                a,
+            )
+            await conn.execute(
+                "INSERT INTO season_notified (person_id, month, notified_at)"
+                " SELECT :keep, month, notified_at FROM season_notified"
+                " WHERE person_id = :absorb ON CONFLICT DO NOTHING",
+                a,
+            )
+            await conn.execute(
+                "INSERT INTO pass_reached (person_id, item_id, month, reached_at)"
                 " SELECT :keep, item_id, month, reached_at FROM pass_reached"
-                " WHERE person_id = :absorb",
+                " WHERE person_id = :absorb ON CONFLICT DO NOTHING",
                 a,
             )
             # A code taken by the absorbed side is the kept person's; where both
             # took one of the same reward, the absorbed one's stays taken.
             await conn.execute(
-                "UPDATE OR IGNORE pass_item_codes SET person_id = :keep WHERE person_id = :absorb",
+                "UPDATE pass_item_codes SET person_id = :keep WHERE person_id = :absorb"
+                " AND NOT EXISTS (SELECT 1 FROM pass_item_codes o"
+                "  WHERE o.person_id = :keep AND o.item_id = pass_item_codes.item_id)",
                 a,
             )
-            for table in ("web_sessions", "notifications", "push_subscriptions", "passkeys"):
+            # A PSN token goes with its account (#233); one whose account was not
+            # kept stops counting with its link and is forgotten later.
+            for table in (
+                "web_sessions",
+                "notifications",
+                "push_subscriptions",
+                "passkeys",
+                "psn_tokens",
+            ):
                 await conn.execute(
                     f"UPDATE {table} SET person_id = :keep WHERE person_id = :absorb", a
                 )
@@ -214,10 +246,10 @@ class _MergeRepo:
             # for the person who stays.
             for column, other in (("follower_id", "followee_id"), ("followee_id", "follower_id")):
                 await conn.execute(
-                    f"INSERT OR IGNORE INTO follow_log ({column}, {other}, notified_at,"
+                    f"INSERT INTO follow_log ({column}, {other}, notified_at,"
                     "  unfollowed_at)"
                     f" SELECT :keep, {other}, notified_at, unfollowed_at FROM follow_log"
-                    f" WHERE {column} = :absorb AND {other} != :keep",
+                    f" WHERE {column} = :absorb AND {other} != :keep ON CONFLICT DO NOTHING",
                     a,
                 )
 

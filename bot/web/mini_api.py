@@ -26,7 +26,15 @@ from bot.i18n import AVAILABLE_LOCALES, normalize_locale
 from bot.poller.fetcher import Fetcher
 from bot.poller.psn_fetcher import PsnFetcher
 from bot.poller.steam_fetcher import SteamFetcher
-from bot.services import achievement_icons, avatars, custom_avatars, game_art
+from bot.services import (
+    achievement_icons,
+    avatars,
+    custom_avatars,
+    game_art,
+    game_page,
+    roles,
+    time_zones,
+)
 from bot.services.admin_credentials import AdminCredentials
 from bot.services.connect import ConnectService
 from bot.services.crypto import TokenCipher
@@ -43,6 +51,7 @@ from bot.services.psn.client import (
     is_trophy_visible,
     resolve_profile,
 )
+from bot.services.psn.personal import looks_like_token
 from bot.services.steam.auth import SteamAuth
 from bot.services.steam.client import (
     SteamApiError,
@@ -63,10 +72,11 @@ from bot.web import (
     mini_notifications,
     mini_passkeys,
     mini_people,
+    mini_psn_token,
     mini_session,
 )
 from bot.web.mini_admin import setup_admin_routes
-from bot.web.mini_auth import InitDataError, MiniAppUser, validate_init_data
+from bot.web.mini_auth import InitDataError, MiniAppUser, validate_init_data_any
 from bot.web.mini_avatars import forget_avatar, image_mime, load_avatar_bytes
 from bot.web.mini_chat import (
     _https_url,
@@ -76,10 +86,14 @@ from bot.web.mini_chat import (
     build_person_payload,
     build_summary_payload,
     chat_of_user,
+    news_game,
+    news_text,
+    news_title,
 )
 from bot.web.mini_game import setup_game_routes
 from bot.web.mini_me import build_me_payload
 from bot.web.mini_pass import setup_pass_routes
+from bot.web.mini_share import setup_share_routes
 
 log = logging.getLogger(__name__)
 
@@ -166,6 +180,7 @@ def setup_mini_api(
     app.router.add_delete("/api/mini/me", handle_delete_me)
     app.router.add_post("/api/mini/me/delete", handle_delete_me)
     app.router.add_patch("/api/mini/settings", handle_patch_settings)
+    app.router.add_get("/api/mini/time-zones", handle_time_zones)
     app.router.add_put("/api/mini/me/handle", handle_put_handle)
     app.router.add_post("/api/mini/me/handle/confirm", handle_confirm_handle)
     app.router.add_put("/api/mini/me/avatar", handle_put_avatar)
@@ -176,6 +191,7 @@ def setup_mini_api(
     app.router.add_post("/api/mini/disconnect/steam", handle_disconnect_steam)
     app.router.add_post("/api/mini/connect/psn", handle_connect_psn)
     app.router.add_post("/api/mini/disconnect/psn", handle_disconnect_psn)
+    mini_psn_token.setup(app)
     app.router.add_post("/api/mini/sync", handle_sync)
     app.router.add_patch("/api/mini/accounts/{platform}", handle_patch_account)
     app.router.add_get("/api/mini/chats", handle_chats)
@@ -206,6 +222,7 @@ def setup_mini_api(
     app.router.add_get("/api/mini/games/{platform}/{title_id}/guides", handle_game_guides)
     setup_admin_routes(app)
     setup_game_routes(app)
+    setup_share_routes(app)
     setup_pass_routes(app)
 
 
@@ -233,6 +250,11 @@ async def handle_me(request: web.Request) -> web.Response:
     user = await _require_user(request)
     settings: Settings = request.app["mini_settings"]
     repo: Repo = request.app["mini_repo"]
+    role = await repo.person_role(user.person_id)
+    # The environment's super-admins are super-admins, whatever was stored.
+    if settings.is_superadmin(user.tg_id) and role != roles.SUPERADMIN:
+        await repo.set_person_role(user.person_id, roles.SUPERADMIN)
+        role = roles.SUPERADMIN
     payload = await build_me_payload(
         repo,
         person_id=user.person_id,
@@ -240,8 +262,12 @@ async def handle_me(request: web.Request) -> web.Response:
         username=user.username,
         first_name=user.first_name,
         last_name=user.last_name,
-        is_superadmin=settings.is_superadmin(user.tg_id),
+        # The admin panel's door: an admin's too (owner, 2026-10-28).
+        is_superadmin=roles.runs_the_app(role),
     )
+    payload["role"] = roles.stored(role)
+    # A chat admin opens the admin panel too, to their chats only (#232).
+    payload["chat_admin"] = user.tg_id is not None and bool(await repo.chats_admined_by(user.tg_id))
     # Ask once for an email, the main way in (owner, 2026-10-05) — only where
     # one can be added at all.
     payload["email_prompt"] = request.app.get("mini_email_login") is not None and (
@@ -282,6 +308,28 @@ async def handle_confirm_handle(request: web.Request) -> web.Response:
     return await handle_me(request)
 
 
+async def handle_time_zones(request: web.Request) -> web.Response:
+    """The places the time zone picker offers, by their offset now, named in
+    `?locale=`; `?device=` (the phone's own zone) is added when not among
+    them, so it can be picked in one tap."""
+    await _require_user(request)
+    locale = normalize_locale(request.query.get("locale", "ru"))
+    zones = time_zones.choices(locale)
+    device = time_zones.current_name(request.query.get("device", "").strip())
+    if time_zones.valid(device) and not device.startswith("Etc/"):
+        row = time_zones.row_of(device) or device
+        known = next((z for z in zones if z["id"] == row), None)
+        if known is None:
+            known = {
+                "id": device,
+                "name": time_zones.place(device, locale),
+                "offset": time_zones.offset_minutes(device),
+                "label": time_zones.label(device, locale),
+            }
+        return web.json_response({"ok": True, "zones": zones, "device": known})
+    return web.json_response({"ok": True, "zones": zones, "device": None})
+
+
 async def handle_patch_settings(request: web.Request) -> web.Response:
     user = await _require_user(request)
     repo: Repo = request.app["mini_repo"]
@@ -302,6 +350,14 @@ async def handle_patch_settings(request: web.Request) -> web.Response:
                 fields["tz_offset_min"] = int(raw)
             except (TypeError, ValueError) as exc:
                 raise web.HTTPBadRequest(text="bad tz_offset_min") from exc
+    if "tz_name" in body:
+        # A zone by place (owner, 2026-10-30): any the server knows, a
+        # phone's own included; the offset beside it is today's, for show.
+        name = time_zones.current_name(str(body["tz_name"] or "").strip())
+        if not time_zones.valid(name):
+            raise web.HTTPBadRequest(text="bad tz_name")
+        fields["tz_name"] = name
+        fields["tz_offset_min"] = time_zones.offset_minutes(name)
     if "show_secrets" in body:
         fields["show_secrets"] = 1 if body["show_secrets"] else 0
     for switch in ("notify_push", "notify_telegram"):
@@ -445,6 +501,10 @@ async def handle_connect_psn(request: web.Request) -> web.Response:
     raw = str(body.get("online_id") or body.get("identity") or "").strip()
     if not raw:
         return web.json_response({"ok": False, "error": "missing_identity"}, status=400)
+    if looks_like_token(raw):
+        from bot.web.mini_psn_token import link_by_token
+
+        return await link_by_token(request, user, raw)
 
     # Up to MAX_PSN_ACCOUNTS accounts (#10); the limit is checked again
     # below once the Online ID is resolved, since relinking one already held
@@ -459,7 +519,7 @@ async def handle_connect_psn(request: web.Request) -> web.Response:
     except PsnTokenDeadError:
         return web.json_response({"ok": False, "error": "service_dead"}, status=503)
     except PsnApiError as exc:
-        log.info("mini connect_psn: resolve failed tg_id=%s raw=%r: %s", user.tg_id, raw, exc)
+        log.info("mini connect_psn: resolve failed tg_id=%s: %s", user.tg_id, exc)
         return web.json_response({"ok": False, "error": "not_found"}, status=404)
 
     if not await is_trophy_visible(client, profile.account_id):
@@ -664,7 +724,7 @@ async def _following_scope(request: web.Request) -> tuple[Any, Repo, list[int], 
     if person is None:
         raise web.HTTPNotFound(text="no person")
     settings_row = await repo.get_user_settings(user.person_id)
-    tz = settings_row.tz_offset_min if settings_row else None
+    tz = settings_row.tz if settings_row else None
     return user, repo, await repo.following_members(person), tz
 
 
@@ -742,6 +802,7 @@ async def handle_news_post(request: web.Request) -> web.Response:
     # A game is its platform and its id (#147); a link from before names only
     # the id, and then the first platform that has it answers.
     game = None
+    locale = await _user_locale(repo, user.person_id)
     title_id = request.query.get("title_id")
     if title_id:
         asked = request.query.get("platform")
@@ -751,11 +812,11 @@ async def handle_news_post(request: web.Request) -> web.Response:
                 continue
             key = (platform, title_id)
             names = (await repo.title_names([key])).get(key, (None, None))
-            locale = await _user_locale(repo, user.person_id)
             name = pick_name(locale, names[0], names[1], name_en)
             if name:
                 icon = await repo.title_icon_url(platform, title_id)
-                game = {"name": name, "icon_url": _https_url(icon)}
+                found = await game_page.games_of_lists(repo, [key], locale)
+                game = news_game(found.get(key), platform, title_id, name, _https_url(icon))
             break
     return web.json_response(
         {
@@ -763,9 +824,9 @@ async def handle_news_post(request: web.Request) -> web.Response:
             "appid": appid,
             "gid": post.gid,
             "kind": post.kind,
-            "title": post.title,
+            "title": news_title(post, locale),
             "date": post.published_at,
-            "text": post.text_en or "",
+            "text": news_text(post, locale),
             "image": _https_url(post.image_url),
             "url": f"https://store.steampowered.com/news/app/{appid}/view/{post.gid}",
         }
@@ -1132,6 +1193,12 @@ async def handle_game_details(request: web.Request) -> web.Response:
         platform, title_id, person_id=viewed, force=force
     )
     title_info = await repo.title_record(platform, title_id) or {}
+    # The game this list is of, as the catalog names and pictures it.
+    in_catalog = (
+        await game_page.games_of_lists(
+            repo, [(platform, title_id)], await _user_locale(repo, user.person_id)
+        )
+    ).get((platform, title_id))
     # What the stores say about the game (#147), when it is due.
     collector: StoreCollector | None = request.app.get("mini_store_collector")
     if collector is not None and title_info:
@@ -1177,9 +1244,19 @@ async def handle_game_details(request: web.Request) -> web.Response:
         else:
             xbox_groups = {}
 
+    # The list's descriptions on their way: the app blurs what has no Russian yet.
+    on_their_way: set[str] = set()
+    translator = collector.translator if collector is not None else None
+    list_game = await repo.game_of_list(platform, title_id) if translator is not None else None
+    if list_game is not None:
+        pending = await translator.pending(list_game, await _user_locale(repo, user.person_id))
+        if pending.achievements:
+            on_their_way = await translator.rows_on_their_way(platform, title_id)
+
     return web.json_response(
         {
             "ok": True,
+            "translating": bool(on_their_way),
             "viewed": viewed_json,
             "platform": platform,
             "title_id": title_id,
@@ -1190,6 +1267,7 @@ async def handle_game_details(request: web.Request) -> web.Response:
             # content, and the page used to swap its good picture for it.
             "icon_url": _https_url(title_info.get("icon_url")),
             "cover_path": title_info.get("cover_path"),
+            "game": in_catalog,
             "achievements_total": total,
             "catalog_partial": partial,
             "achievements_unlocked": unlocked,
@@ -1203,6 +1281,7 @@ async def handle_game_details(request: web.Request) -> web.Response:
                     "name_en": item.achievement.name_en,
                     "description_ru": item.achievement.description_ru,
                     "description_en": item.achievement.description_en,
+                    "translating": item.achievement.achievement_id in on_their_way,
                     "icon_url": achievement_icons.format_achievement_icon_url(
                         platform,
                         title_id,
@@ -1309,7 +1388,7 @@ async def _require_user(request: web.Request) -> MiniAppUser:
         raise
     settings: Settings = request.app["mini_settings"]
     try:
-        user = validate_init_data(init_data, settings.bot_token.get_secret_value())
+        user = validate_init_data_any(init_data, settings.mini_app_tokens())
     except InitDataError as exc:
         log.info("mini initData rejected: %s (len=%s)", exc, len(init_data))
         raise web.HTTPUnauthorized(text="invalid initData") from exc

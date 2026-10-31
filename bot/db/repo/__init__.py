@@ -80,9 +80,10 @@ from bot.db.repo._catalog import _CatalogRepo
 from bot.db.repo._chat_stats import _ChatStatsRepo
 from bot.db.repo._chats import _ChatsRepo
 from bot.db.repo._database import (
+    APP_SCHEMA_PATH,
     DEFAULT_APP_SETTINGS,
+    GAMES_SCHEMA_PATH,
     MIGRATIONS_DIR,
-    SCHEMA_PATH,
     Database,
 )
 from bot.db.repo._descriptions import _DescriptionsRepo
@@ -139,6 +140,7 @@ from bot.db.repo._pass import _PassRepo
 from bot.db.repo._passkeys import PasskeyRow, _PasskeysRepo
 from bot.db.repo._platform_links import _PlatformLinksRepo
 from bot.db.repo._polling import _PollingRepo
+from bot.db.repo._psn_tokens import PsnTokenRow, _PsnTokensRepo
 from bot.db.repo._series import _SeriesRepo
 from bot.db.repo._sessions import _SessionsRepo
 from bot.db.repo._stats import _StatsRepo
@@ -147,12 +149,13 @@ from bot.db.repo._stores import _StoresRepo
 from bot.db.repo._tx import GatedConnection, transaction
 
 __all__ = [
-    # Re-exported for scripts/backfill_*.py and the odd test that reaches
+    "APP_SCHEMA_PATH",
+    # Re-exported for the odd script or test that reaches
     # for a constant directly rather than through a Repo method — same
     # names, same values as before the split.
     "DEFAULT_APP_SETTINGS",
+    "GAMES_SCHEMA_PATH",
     "MIGRATIONS_DIR",
-    "SCHEMA_PATH",
     "AchievementRow",
     "AdminPanelRefreshRow",
     "AdminUserRow",
@@ -190,6 +193,7 @@ __all__ = [
     "PsnPollTarget",
     "PsnPresenceRow",
     "PsnPresenceTarget",
+    "PsnTokenRow",
     "PushSubscription",
     "RecentAchievement",
     "Repo",
@@ -241,6 +245,7 @@ class Repo(
     _GamePageRepo,
     _SeriesRepo,
     _PassRepo,
+    _PsnTokensRepo,
 ):
     """Every query in the project. Services call these; handlers call services."""
 

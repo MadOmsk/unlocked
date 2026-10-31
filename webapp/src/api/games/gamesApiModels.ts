@@ -17,6 +17,8 @@ export type GameAchievement = {
   name_en: string | null;
   description_ru: string | null;
   description_en: string | null;
+  /** Its Russian is on its way: it shows blurred. */
+  translating?: boolean;
   icon_url: string | null;
   is_secret: boolean;
   score?: number | null;
@@ -39,6 +41,8 @@ export type GameGroup = {
 
 export type GameDetails = {
   ok: boolean;
+  /** The list's descriptions are on their way: what has no Russian shows blurred. */
+  translating?: boolean;
   /** Whose progress this is, when not the viewer's own. */
   viewed?: { person_id: number; name: string } | null;
   platform: string;
@@ -48,6 +52,8 @@ export type GameDetails = {
   name_en: string | null;
   icon_url: string | null;
   cover_path: string | null;
+  /** The catalog's game the list is of (none while it is in no game). */
+  game?: { game_id: number; name: string | null; poster: string | null; hero: string | null } | null;
   achievements_total: number;
   achievements_unlocked: number;
   completion_percent: number;

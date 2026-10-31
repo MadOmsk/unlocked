@@ -43,8 +43,27 @@ export function AdminPage({ screen, onClose, layer }: { screen: AdminScreen | nu
   );
 }
 
+/** A list on its way: a few of its rows, each one block. */
+function RowsSkel() {
+  return (
+    <div className="group" aria-hidden="true">
+      <div className="group-items">
+        {[0, 1, 2].map((i) => (
+          <span key={i} className="row skel" style={{ height: 72 }} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function AdminHomeView() {
-  const { data, tr, open, locale } = useApp();
+  const { me } = useApp();
+  // A chat admin's panel is their chats alone (#232).
+  return me.is_superadmin ? <AppAdminHomeView /> : <ChatsView />;
+}
+
+function AppAdminHomeView() {
+  const { data, tr, open, locale, me } = useApp();
   const home = useLoad("admin-home", () => adminApi.fetchHome(data));
   const h = home.data;
   return (
@@ -67,9 +86,17 @@ function AdminHomeView() {
           ))}
         </div>
       )}
-      {!h && home.loading && <span className="adm-skel skel" />}
+      {!h && home.loading && (
+        <div className="adm-counts" aria-hidden="true">
+          {[0, 1, 2, 3, 4].map((i) => (
+            <div key={i} className="skel" />
+          ))}
+        </div>
+      )}
       <Group>
-        <Row lead={<Icon name="key" />} title={tr("adminKeys")} sub={tr("adminKeysSub")} chevron onClick={() => open({ kind: "admin", screen: { name: ADMIN_SCREENS.KEYS } })} />
+        {me.role === "superadmin" && (
+          <Row lead={<Icon name="key" />} title={tr("adminKeys")} sub={tr("adminKeysSub")} chevron onClick={() => open({ kind: "admin", screen: { name: ADMIN_SCREENS.KEYS } })} />
+        )}
         <Row lead={<Icon name="settings" />} title={tr("adminSettings")} sub={tr("adminSettingsSub")} chevron onClick={() => open({ kind: "admin", screen: { name: ADMIN_SCREENS.SETTINGS } })} />
         <Row lead={<Icon name="people" />} title={tr("adminUsers")} sub={tr("adminUsersSub")} chevron onClick={() => open({ kind: "admin", screen: { name: ADMIN_SCREENS.USERS } })} />
         <Row lead={<Icon name="share" />} title={tr("adminChats")} sub={tr("adminChatsSub")} chevron onClick={() => open({ kind: "admin", screen: { name: ADMIN_SCREENS.CHATS } })} />
@@ -112,7 +139,7 @@ function CredentialRow({ c, onClick }: { c: AdminCredential; onClick?: () => voi
 }
 
 function KeysView() {
-  const { data, tr, toast } = useApp();
+  const { data, tr, toast, locale, open } = useApp();
   const keys = useLoad("admin-keys", () => adminApi.fetchKeys(data));
   const [edit, setEdit] = useState<AdminCredential | null>(null);
   const [value, setValue] = useState("");
@@ -134,6 +161,21 @@ function KeysView() {
           />
         ))}
       </Group>
+      {keys.data?.psn_tokens && (
+        <Group title={tr("adminPsnTokens")}>
+          {keys.data.psn_tokens.accounts.map((t) => (
+            <Row
+              key={t.account_id}
+              lead={<span className={`adm-dot ${t.status === "active" ? "adm-dot-ok" : "adm-dot-bad"}`} />}
+              title={t.name}
+              sub={`${t.who} · ${t.status === "active" ? `${tr("psnTokenChecked")} ${formatWhen(t.checked_at ?? "", locale)}` : `${tr("psnTokenDeadSince")} ${formatWhen(t.dead_at ?? "", locale)}`}`}
+              chevron
+              onClick={() => open({ kind: "admin", screen: { name: ADMIN_SCREENS.USER, personId: t.person_id } })}
+            />
+          ))}
+          <Row title={tr("adminPsnTokensShared").replace("{count}", String(keys.data.psn_tokens.shared))} sub={tr("adminPsnTokensNote")} />
+        </Group>
+      )}
       {edit && (
         <Sheet title={edit.label} onClose={() => setEdit(null)} layer="key">
           <form
@@ -152,6 +194,11 @@ function KeysView() {
               }
             }}
           >
+            <p className="t-body">
+              {!edit.configured ? tr("keyUnset") : edit.status === "invalid" ? tr("keyDead") : tr("keySet")}
+              {edit.checked_at ? ` · ${formatWhen(edit.checked_at, locale)}` : ""}
+            </p>
+            {edit.usage && <p className="t-meta">{`${tr("adminKeyRequests")}: ${edit.usage}`}</p>}
             <p className="t-body">{edit.hint}</p>
             <Field
               type="password"
@@ -302,7 +349,7 @@ function GlobalSettingsView() {
   const { data, tr, toast } = useApp();
   const settings = useLoad("admin-settings", () => adminApi.fetchSettings(data));
   const actions = useLoad("admin-actions-global", () => adminApi.fetchActions(data, "global", "all"));
-  if (!settings.data) return settings.loading ? <span className="adm-skel skel" /> : <Empty icon="refresh" title={tr("loadFailed")} />;
+  if (!settings.data) return settings.loading ? <RowsSkel /> : <Empty icon="refresh" title={tr("loadFailed")} />;
   return (
     <>
       <SettingsGroups
@@ -316,7 +363,7 @@ function GlobalSettingsView() {
           }
         }}
       />
-      {(actions.data?.actions.length ?? 0) > 0 && <Actions actions={actions.data!.actions} onGone={() => undefined} />}
+      {(actions.data?.actions.length ?? 0) > 0 && <Actions actions={actions.data!.actions} onDone={actions.reload} onGone={() => undefined} />}
     </>
   );
 }
@@ -331,14 +378,14 @@ function UsersView() {
       <div className="fl-search">
         <Field icon="search" placeholder={tr("searchPeople")} value={q} onChange={(e) => setQ(e.target.value)} />
       </div>
-      {!users.data && users.loading && <span className="adm-skel skel" />}
+      {!users.data && users.loading && <RowsSkel />}
       {users.data && list.length === 0 && <Empty icon="people" title={tr("noUsers")} />}
       <Group>
         {list.map((u) => (
           <Row
             key={u.person_id}
             lead={<Face personId={u.person_id} name={u.name} size={40} dim={u.is_excluded} />}
-            title={u.name}
+            title={u.role === "superadmin" ? `${u.name} 👑` : u.role === "admin" ? `${u.name} ⭐` : u.name}
             sub={[
               [u.xbox && "Xbox", u.psn && "PS", u.steam && "Steam"].filter(Boolean).join(" · ") || tr("noPlatformsShort"),
               `${tr("usersToday")} ${u.today} · ${tr("usersMonth")} ${u.month}`,
@@ -356,11 +403,11 @@ function UsersView() {
 }
 
 function UserView({ personId, onGone }: { personId: number; onGone: () => void }) {
-  const { data, tr } = useApp();
+  const { data, tr, locale } = useApp();
   const card = useLoad(`admin-user:${personId}`, () => adminApi.fetchUser(data, personId));
   const actions = useLoad(`admin-actions-user:${personId}`, () => adminApi.fetchActions(data, "user", `p${personId}`));
   const c = card.data;
-  if (!c) return card.loading ? <span className="adm-skel skel" /> : <Empty icon="refresh" title={tr("loadFailed")} />;
+  if (!c) return card.loading ? <RowsSkel /> : <Empty icon="refresh" title={tr("loadFailed")} />;
   const platform = (label: string, info: Record<string, unknown> | null) =>
     info ? (
       <Group key={label} title={label}>
@@ -385,6 +432,18 @@ function UserView({ personId, onGone }: { personId: number; onGone: () => void }
       </Group>
       {platform("Xbox", c.xbox)}
       {platform("PlayStation", c.psn)}
+      {Array.isArray(c.psn?.accounts) && (
+        <Group title={tr("adminPsnTokens")}>
+          {(c.psn.accounts as Array<{ external_id: string; name: string | null; token?: string | null; token_checked_at?: string | null }>).map((a) => (
+            <Row
+              key={a.external_id}
+              lead={<Icon name="key" />}
+              title={a.name ?? a.external_id}
+              sub={a.token === "active" ? `${tr("psnTokenOwn")} · ${formatWhen(a.token_checked_at ?? "", locale)}` : a.token === "dead" ? tr("psnTokenDeadShort") : tr("psnTokenShared")}
+            />
+          ))}
+        </Group>
+      )}
       {platform("Steam", c.steam)}
       <Group title={tr("publishing")}>
         <Row title={c.rarity.title} sub={c.rarity.value} />
@@ -402,7 +461,7 @@ function ChatsView() {
   const chats = useLoad("admin-chats", () => adminApi.fetchChats(data));
   return (
     <>
-      {!chats.data && chats.loading && <span className="adm-skel skel" />}
+      {!chats.data && chats.loading && <RowsSkel />}
       <Group>
         {(chats.data?.chats ?? []).map((c) => (
           <Row
@@ -425,7 +484,7 @@ function ChatView({ chatId, onGone }: { chatId: number; onGone: () => void }) {
   const actions = useLoad(`admin-actions-chat:${chatId}`, () => adminApi.fetchActions(data, "chat", String(chatId)));
   return (
     <>
-      {!settings.data && settings.loading && <span className="adm-skel skel" />}
+      {!settings.data && settings.loading && <RowsSkel />}
       {settings.data && (
         <SettingsGroups
           settings={settings.data}
@@ -439,7 +498,95 @@ function ChatView({ chatId, onGone }: { chatId: number; onGone: () => void }) {
           }}
         />
       )}
+      <ChatAdminGroup chatId={chatId} onGone={onGone} />
       {actions.data && <Actions actions={actions.data.actions} onGone={onGone} />}
+    </>
+  );
+}
+
+/** The chat's one admin (#232): an app admin appoints or removes; the chat admin hands the role on. */
+function ChatAdminGroup({ chatId, onGone }: { chatId: number; onGone: () => void }) {
+  const { data, tr, toast } = useApp();
+  const state = useLoad(`admin-chat-admin:${chatId}`, () => adminApi.fetchChatAdmin(data, chatId));
+  const [picking, setPicking] = useState(false);
+  const [ask, setAsk] = useState<{ tgId: number; name: string } | null>(null);
+  const [remove, setRemove] = useState(false);
+  const s = state.data;
+  if (!s) return null;
+  const give = async (tgId: number) => {
+    try {
+      const res = await adminApi.putChatAdmin(data, chatId, tgId);
+      toast(tr("chatAdminDone"));
+      if (!res.still) onGone();
+      else state.reload();
+    } catch {
+      toast(tr("somethingWrong"), "error");
+    }
+  };
+  return (
+    <>
+      <Group title={tr("chatAdmin")}>
+        <Row lead={<Icon name="people" />} title={s.admin?.name ?? tr("chatAdminNone")} />
+        <Row
+          title={s.hand_on ? tr("chatAdminHandOn") : tr("chatAdminAppoint")}
+          sub={s.hand_on ? tr("chatAdminHandOnSub") : undefined}
+          chevron
+          onClick={() => setPicking(true)}
+        />
+        {s.can_remove && <Row title={tr("chatAdminRemove")} danger onClick={() => setRemove(true)} />}
+      </Group>
+      {picking && (
+        <Sheet title={tr("chatAdminPick")} onClose={() => setPicking(false)} layer="chat-admin">
+          {s.candidates.length === 0 ? (
+            <Empty title={tr("chatAdminNobody")} />
+          ) : (
+            <Group>
+              {s.candidates.map((c) => (
+                <Row
+                  key={c.tg_id}
+                  lead={<Face personId={c.person_id} name={c.name} size={36} />}
+                  title={c.name}
+                  onClick={() => {
+                    setPicking(false);
+                    setAsk({ tgId: c.tg_id, name: c.name });
+                  }}
+                />
+              ))}
+            </Group>
+          )}
+        </Sheet>
+      )}
+      {ask && (
+        <Confirm
+          text={(s.hand_on ? tr("chatAdminConfirmHandOn") : tr("chatAdminConfirm")).replace("{name}", ask.name)}
+          yes={tr("yes")}
+          no={tr("cancel")}
+          danger={s.hand_on}
+          onYes={() => {
+            const a = ask;
+            setAsk(null);
+            void give(a.tgId);
+          }}
+          onNo={() => setAsk(null)}
+        />
+      )}
+      {remove && (
+        <Confirm
+          text={tr("chatAdminConfirmRemove")}
+          yes={tr("yes")}
+          no={tr("cancel")}
+          danger
+          onYes={async () => {
+            setRemove(false);
+            try {
+              state.set(await adminApi.deleteChatAdmin(data, chatId));
+            } catch {
+              toast(tr("somethingWrong"), "error");
+            }
+          }}
+          onNo={() => setRemove(false)}
+        />
+      )}
     </>
   );
 }

@@ -13,9 +13,8 @@ all.
     python scripts/render_screen.py achievement --locale en --send
 
 Nothing here writes: it reads the database the .env points at and, with
---send, posts to the first id in SUPERADMIN_TG_IDS. Point DB_PATH at a copy when
-rendering against production data — and keep that copy in backups/, which is
-the one place a database copy may live (see CLAUDE.md's Operations).
+--send, posts to the first id in SUPERADMIN_TG_IDS. Point DATABASE_SCHEMA at a
+copy when rendering against production data.
 
 A copy rendered with a *different* FERNET_KEY than the one that filled it
 degrades honestly rather than failing: the shared credentials come back as
@@ -26,7 +25,6 @@ about a secret it cannot open.
 from __future__ import annotations
 
 import argparse
-import asyncio
 import sys
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -42,7 +40,8 @@ from aiogram.types import InputMediaPhoto
 
 from bot.config import Settings
 from bot.constants import Platform
-from bot.db.repo import AchievementRow, Database, Repo, TitleProgress
+from bot.db import tools
+from bot.db.repo import AchievementRow, Repo, TitleProgress
 from bot.i18n import i18n_for
 from bot.services.admin_credentials import AdminCredentials
 from bot.services.admin_registry import find as find_setting
@@ -202,7 +201,7 @@ async def _summary(ctx: Context) -> Screen | None:
         chat.rare_threshold_percent,
         date.today(),
         locale=ctx.locale,
-        tz_offset_min=chat.tz_offset_min,
+        tz_offset_min=chat.tz,
     )
     return Screen(*built) if built else None
 
@@ -284,17 +283,6 @@ async def _digest(ctx: Context) -> Screen:
 # ----------------------------------------------------------------- the admin panel
 
 
-class _NoUsage:
-    """The card's API-usage line reads a rate limiter's in-memory counters,
-    which belong to the running bot's own process — this script has none.
-    Rendering it as "нет данных" is what the real card shows right after a
-    restart, and is honest; inventing numbers for a mockup would not be."""
-
-    @staticmethod
-    def api_usage() -> list[tuple[int, int, float]]:
-        return []
-
-
 def _credentials(ctx: Context) -> AdminCredentials:
     cipher = TokenCipher(ctx.settings.fernet_key.get_secret_value())
     steam_key = ctx.settings.steam_api_key
@@ -311,15 +299,13 @@ def _credentials(ctx: Context) -> AdminCredentials:
 
 @screen("admin-home")
 async def _admin_home(ctx: Context) -> Screen:
-    text, markup = await render_admin_home(
-        ctx.repo, _NoUsage(), _NoUsage(), _credentials(ctx), locale=ctx.locale
-    )
+    text, markup = await render_admin_home(ctx.repo, _credentials(ctx), locale=ctx.locale)
     return Screen(text, markup)
 
 
 @screen("admin-keys")
 async def _admin_keys(ctx: Context) -> Screen:
-    return Screen(*await render_keys(_credentials(ctx), locale=ctx.locale))
+    return Screen(*await render_keys(_credentials(ctx), ctx.repo, locale=ctx.locale))
 
 
 @screen("admin-users")
@@ -380,10 +366,10 @@ async def _admin_setting_tz(ctx: Context) -> Screen | None:
     chat = await find_chat(ctx.repo, ctx.chat_id)
     if chat is None:
         return None
-    setting = find_setting("chat", "tz_offset_min")
+    setting = find_setting("chat", "tz_name")
     return render_setting_choices(
         setting,
-        chat.tz_offset_min,
+        chat.tz,
         locale=ctx.locale,
         back=f"a:cg:{ctx.chat_id}:main",
         chat_id=ctx.chat_id,
@@ -441,7 +427,7 @@ async def main() -> int:
         parser.error(f"unknown screen(s): {', '.join(unknown)}")
 
     settings = Settings()
-    database = await Database(Path(settings.db_path)).connect()
+    database = await tools.open_database(settings.database_url, schema=settings.database_schema)
     try:
         repo = Repo(database)
         admin_id = settings.superadmin_tg_ids[0]
@@ -484,4 +470,4 @@ async def main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(asyncio.run(main()))
+    raise SystemExit(tools.run(main()))

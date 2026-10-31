@@ -7,8 +7,8 @@ admin-back = ‹ Назад
 admin-cancel = Отмена
 admin-yes = да
 admin-no = нет
-admin-active = активен
-admin-inactive = отключён
+admin-active = в чате
+admin-inactive = не в чате
 
 # Runtime settings
 admin-setting-summary-rows = Строк в /summary
@@ -27,6 +27,14 @@ admin-setting-email-provider-daily = Лимит почтового сервис�
 admin-setting-email-sends-total = Кодов на почту всего в час
 admin-setting-email-checks-client = Проверок кода с одного IP за 10 минут
 admin-setting-patch-refresh = Обновление патчей игр (часы)
+admin-setting-translation-batch = Перевод: игр в пачке
+admin-translation-queue-on = 🌐 Очередь перевода выключена — включить
+admin-translation-queue-on-confirm = Включить очередь перевода? Она сама тратит деньги на модель.
+admin-translation-queue-on-yes = Да, включить
+admin-translation-queue-off = 🌐 Очередь перевода включена — выключить
+admin-translation-queue-now-on = Очередь перевода включена
+admin-translation-queue-now-off = Очередь перевода выключена
+admin-setting-translation-interval = Перевод: раз в сколько минут
 admin-setting-octopus-per-tick = Сборка игр осьминогом (в минуту)
 
 # The settings registry (#176, services/admin_registry.py): one label per
@@ -49,7 +57,7 @@ admin-post-picture-size-original = Оригинал (без карточки)
 admin-post-picture-off = Как есть
 admin-post-picture-color = Фон цветом иконки
 admin-post-picture-cover = Фон обложкой игры
-admin-setting-chat-active = Чат включён
+admin-setting-chat-publishing = Публикации в чате
 admin-setting-chat-locale = Язык
 admin-setting-chat-tz = Часовой пояс
 admin-setting-digest = Дайджест с
@@ -62,6 +70,20 @@ admin-group-global-newcomers = Новые пользователи
 admin-group-global-lists = Списки
 admin-group-global-hltb = HLTB
 admin-group-global-timers = Таймеры
+admin-group-global-poll_xbox = Опрос статуса: Xbox
+admin-group-global-poll_steam = Опрос статуса: Steam
+admin-group-global-poll_psn = Опрос статуса: PlayStation
+admin-setting-poll-in-game = В игре (мин)
+admin-setting-poll-online = В сети, без игры (мин)
+admin-setting-poll-offline = Не в сети (мин)
+admin-setting-poll-idle = Давно не в сети (мин)
+admin-setting-poll-idle-after = «Давно» — после (мин не в сети)
+admin-setting-poll-dormant = Спящий аккаунт (мин)
+admin-setting-poll-dormant-after = «Спящий» — после (дней не в сети)
+admin-setting-poll-scan-online = Скан трофеев: в сети (мин)
+admin-setting-poll-scan-offline = Скан трофеев: не в сети (мин)
+admin-setting-poll-scan-dormant = Скан трофеев: спящий (мин)
+admin-setting-poll-shared-slowdown = Без личного токена: реже в (раз)
 admin-group-global-mail = Почта
 admin-group-global-other = Прочее
 admin-group-chat-main = Основное
@@ -80,27 +102,27 @@ admin-settings-zero-hint = { " " }0 — { $meaning }.
 admin-settings-saved = ✅ { $label }: { $value }
 admin-settings-choice-retry = Такого значения нет — выбери кнопкой.
 
-# A place in each of the zones people here live in — the Mini App's
-# admin shows it beside the offset; the bot shows the offset alone.
-admin-tz-place-m480 = Лос-Анджелес
-admin-tz-place-m300 = Нью-Йорк
-admin-tz-place-p0 = Лондон
-admin-tz-place-p60 = Берлин
-admin-tz-place-p120 = Калининград
-admin-tz-place-p180 = Москва
-admin-tz-place-p240 = Самара
-admin-tz-place-p300 = Екатеринбург
-admin-tz-place-p360 = Омск
-admin-tz-place-p420 = Новосибирск
-admin-tz-place-p480 = Иркутск
-admin-tz-place-p540 = Якутск
-admin-tz-place-p600 = Владивосток
-admin-tz-place-p660 = Магадан
-admin-tz-place-p720 = Камчатка
-
 # Platform keys (#17; Anthropic added 2026-09-09 — achievement-description
 # translation only, same admin-settable-shared-credential shape)
 admin-keys-title = 🔑 Ключи платформ
+admin-keys-tap = Нажми на ключ — внутри статус, проверка, нагрузка и действия.
+admin-keys-personal-button = 👥 Личные токены PSN · { $alive } ✅ · { $dead } ⚠️
+admin-keys-back = ‹ Ключи
+admin-key-title = 🔑 <b>{ $label }</b>
+admin-key-status-alive = Статус: ✅ работает
+admin-key-status-dead = Статус: ⚠️ не работает
+admin-key-status-unset = Статус: ⚪️ не задан
+admin-key-checked = Проверен: { $ago }
+admin-key-usage = Запросы: { $usage }
+admin-key-psn-reads = Читает: { $shared } акк. без личного токена и каталог игр · личных токенов: { $alive } ✅ · { $dead } ⚠️
+admin-psntok-title = 👥 <b>Личные токены PSN</b>
+admin-psntok-alive = ✅ <b>{ $name }</b> — { $who }, проверен { $ago }
+admin-psntok-dead = ⚠️ <b>{ $name }</b> — { $who }, не работает { $ago }, владельцу написано
+admin-psntok-none = Пока никто не добавил личный токен.
+admin-psntok-note = Сами токены не показываются никому. Без личного токена: { $shared } акк. (опрос реже — настройка в «Опрос статуса: PlayStation»).
+admin-psn-token-shared = Токен: общий (опрос реже)
+admin-psn-token-alive = Токен: 🔑 личный ✅ (проверен { $ago })
+admin-psn-token-dead = Токен: 🔑 личный ⚠️ не работает ({ $ago })
 admin-keys-line = { $label }: { $state }
 admin-keys-psn-label = PSN
 admin-keys-steam-label = Steam
@@ -242,6 +264,7 @@ admin-promo-confirm-yes = 📢 Да, отправить
 admin-promo-failed = Не получилось отправить промо — бот, возможно, не в чате.
 admin-action-unknown = Это действие сейчас недоступно.
 admin-action-section-messages = Сообщения бота
+admin-action-section-timers = Очередь перевода
 admin-action-section-rules = Проверка уведомлений
 
 # New users and user cards
@@ -340,8 +363,10 @@ admin-chat-list-row = { $mark }{ $title } · { $subscribers }
 admin-chat-card =
     💬 { $title }
 
-    Состояние:    { $state }
-    Публикуется:  { $subscribers } чел.
+    Бот:          { $state }
+    Публикации:   { $publishing }
+    Подписано:    { $subscribers } чел.
+    Админ чата:   { $admin }
     Итог дня:     { $summary }, в { $time }
     Часовой пояс: { $offset }
     Антифлуд:     { $flood }
@@ -363,3 +388,49 @@ admin-default-player = Игрок
 admin-note-excluded =   исключён
 admin-note-invalid =   вход протух
 admin-note-revoked =   отписался
+
+## Chat admins (#232)
+admin-on = вкл
+admin-off = выкл
+admin-chat-admin-none = нет
+admin-chat-admin-button = 👤 Админ чата ▸
+admin-chat-admin-pick =
+    👤 Админ чата: { $admin }
+
+    Кому отдать роль? В списке те, кто подписан на чат или писал в нём.
+admin-chat-admin-hand-on =
+    👤 Ты админ этого чата.
+
+    Кому передать роль? Ты её потеряешь. В списке те, кто подписан на чат или писал в нём.
+admin-chat-admin-nobody = Здесь пока никого, кому можно отдать роль: человек должен подписаться на чат или написать в нём.
+admin-chat-admin-remove = ✖️ Снять админа
+admin-chat-admin-confirm = Сделать { $name } админом чата «{ $title }»?
+admin-chat-admin-confirm-hand-on = Передать роль админа чата «{ $title }» пользователю { $name }? Ты её потеряешь.
+admin-chat-admin-confirm-yes = Да
+admin-chat-admin-remove-confirm = Снять { $name } с роли админа чата «{ $title }»?
+admin-chat-admin-set = Админ чата теперь { $name }.
+admin-chat-admin-removed = У чата больше нет админа.
+admin-chat-admin-handed-on = Роль передана: { $name } теперь админ чата «{ $title }».
+admin-chat-admin-you =
+    👤 Ты теперь админ чата «{ $title }».
+
+    Его настройки и сообщения — в /admin, или кнопкой «Управление чатом» в /panel группы.
+admin-chat-admin-only = Доступно только для администратора чата
+admin-not-allowed = Это не для тебя.
+admin-chats-mine-empty = Ты пока не админ ни одного чата.
+
+## Roles (#232)
+admin-role = Роль: { $role }
+admin-role-user = пользователь
+admin-role-admin = админ приложения
+admin-role-superadmin = суперадмин
+admin-role-make_admin = ⭐ Сделать админом
+admin-role-make_superadmin = 👑 Сделать суперадмином
+admin-role-unmake_admin = Снять админа
+admin-role-unmake_superadmin = Снять суперадмина (оставить админом)
+admin-role-make_admin-confirm = Сделать { $name } админом приложения? Ему откроются люди, чаты, настройки и сезонный пропуск — без ключей и удаления.
+admin-role-make_superadmin-confirm = Сделать { $name } суперадмином? Ему откроется всё: ключи, удаление людей, роли.
+admin-role-unmake_admin-confirm = Снять с { $name } роль админа приложения?
+admin-role-unmake_superadmin-confirm = Снять с { $name } суперадмина? Он останется админом приложения.
+admin-role-confirm-yes = Да
+admin-role-done = Роль: { $role }

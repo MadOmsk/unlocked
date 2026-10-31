@@ -12,6 +12,7 @@ notification-game-news-lead = { $post ->
 }
 notification-unknown = Something new in the app
 notification-xbox-login-dead = Your Xbox sign-in expired — connect the account again to keep getting achievements
+notification-psn-token-dead = The personal PSN token for { $name } stopped working — the account is read with the shared token again, less often. Add a new one in the panel: /panel → PlayStation
 # New achievements of somebody followed (owner, 2026-10-05). $trophies is yes on PSN.
 notification-new-post = { $name } earned { $trophies ->
     [yes] { $count ->
@@ -41,6 +42,11 @@ notification-new-post-named = earned “{ $name }”{ $more ->
     [0] {""}
    *[other] {" "}and { $more } more
 }
+notification-season-start = { $named ->
+    [yes] { $title } has started!
+   *[no] A new season has started!
+}
+    Who will reach the top first?
 notification-pass-reward = A new reward in the season pass: { $title }
 # The month's points reached a level of the season pass (owner, 2026-10-28):
 # $reward is theme / game / code, $palette the level's theme, $title the prize, $named yes when it has one.

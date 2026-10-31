@@ -4,11 +4,10 @@ from __future__ import annotations
 
 import json
 
-import aiosqlite
-
 from bot.constants import MAIN_GAME_GROUP, achievement_group
 from bot.db.repo._models import TitleAchievementRow, TitleAchievementWithUnlock
 from bot.db.repo._sql import platform_is
+from bot.db.repo._tx import GatedConnection
 from bot.util import looks_russian, utcnow_iso
 
 
@@ -20,7 +19,7 @@ def _group_source(platform: str, group_id: str | None) -> str | None:
 
 
 class _CatalogRepo:
-    _conn: aiosqlite.Connection
+    _conn: GatedConnection
 
     async def upsert_title_achievements(
         self, rows: list[TitleAchievementRow], *, complete: bool = False
@@ -76,7 +75,7 @@ class _CatalogRepo:
                 "  rarity_percent = COALESCE(excluded.rarity_percent, "
                 "                            title_achievements.rarity_percent),"
                 "  updated_at = excluded.updated_at,"
-                "  listed = MAX(title_achievements.listed, excluded.listed)",
+                "  listed = GREATEST(title_achievements.listed, excluded.listed)",
                 (
                     r.platform,
                     r.title_id,
@@ -214,13 +213,13 @@ class _CatalogRepo:
             await self._conn.execute(
                 "UPDATE title_achievements SET trophy_group_id = ?, group_source = 'derived'"
                 " WHERE platform = 'xbox_360' AND title_id = ? AND achievement_id = ?"
-                " AND group_source IS NOT 'platform'",
+                " AND group_source IS DISTINCT FROM 'platform'",
                 (group, title_id, achievement_id),
             )
             await self._conn.execute(
                 "UPDATE seen_achievements SET trophy_group_id = ?, group_source = 'derived'"
                 " WHERE platform = 'xbox_360' AND title_id = ? AND achievement_id = ?"
-                " AND group_source IS NOT 'platform'",
+                " AND group_source IS DISTINCT FROM 'platform'",
                 (group, title_id, achievement_id),
             )
         if commit:
@@ -260,7 +259,7 @@ class _CatalogRepo:
             "       description_source "
             "FROM title_achievements "
             "WHERE platform = ? AND title_id = ? AND listed = 1 "
-            "ORDER BY rowid ASC",
+            "ORDER BY seq ASC",
             (platform, title_id),
         )
         rows = await cursor.fetchall()
@@ -285,6 +284,19 @@ class _CatalogRepo:
             for row in rows
         ]
 
+    async def achievement_name_pair(
+        self, platform: str, title_id: str, achievement_id: str
+    ) -> tuple[str | None, str | None]:
+        """One achievement's two names, Russian and English, as the platform
+        gave them."""
+        cursor = await self._conn.execute(
+            "SELECT name_ru, name_en FROM title_achievements"
+            " WHERE platform = ? AND title_id = ? AND achievement_id = ?",
+            (platform, title_id, achievement_id),
+        )
+        row = await cursor.fetchone()
+        return (row["name_ru"], row["name_en"]) if row else (None, None)
+
     async def title_achievement_names(
         self, platform: str, title_id: str
     ) -> list[TitleAchievementRow]:
@@ -299,7 +311,7 @@ class _CatalogRepo:
             # PlayStation's platinum is for having every other trophy: no guide
             # has anything to say about it.
             "  AND COALESCE(trophy_type, '') <> 'platinum' "
-            "ORDER BY rowid ASC",
+            "ORDER BY seq ASC",
             (platform, title_id),
         )
         return [
@@ -340,7 +352,7 @@ class _CatalogRepo:
                 "  ON sa.platform = ta.platform AND sa.title_id = ta.title_id "
                 " AND sa.achievement_id = ta.achievement_id AND sa.xuid = ? "
                 "WHERE ta.platform = ? AND ta.title_id = ? AND ta.listed = 1 "
-                "ORDER BY ta.rowid ASC",
+                "ORDER BY ta.seq ASC",
                 (xuid, platform, title_id),
             )
         else:
@@ -351,7 +363,7 @@ class _CatalogRepo:
                 "       ta.updated_at, NULL AS unlocked_at "
                 "FROM title_achievements ta "
                 "WHERE ta.platform = ? AND ta.title_id = ? AND ta.listed = 1 "
-                "ORDER BY ta.rowid ASC",
+                "ORDER BY ta.seq ASC",
                 (platform, title_id),
             )
         rows = await cursor.fetchall()
@@ -519,9 +531,12 @@ class _CatalogRepo:
             (new_plat, title_id, old_plat),
         )
         await self._conn.execute(
-            "UPDATE OR IGNORE achievement_list_connectors SET platform = ? WHERE platform = ? AND "
-            "title_id = ?",
-            (new_plat, old_plat, title_id),
+            # Each "UPDATE OR IGNORE" of SQLite is an update of the rows the
+            # new key leaves free (#234); the rest go with the DELETE after.
+            "UPDATE achievement_list_connectors SET platform = ? WHERE platform = ?"
+            " AND title_id = ? AND NOT EXISTS (SELECT 1 FROM achievement_list_connectors o"
+            "  WHERE o.platform = ? AND o.title_id = achievement_list_connectors.title_id)",
+            (new_plat, old_plat, title_id, new_plat),
         )
         await self._conn.execute(
             "DELETE FROM achievement_list_connectors WHERE platform = ? AND title_id = ?",
@@ -529,18 +544,20 @@ class _CatalogRepo:
         )
         # When its HLTB entry was last asked about is the list's too.
         await self._conn.execute(
-            "UPDATE OR IGNORE fetch_state SET subject = ?"
-            " WHERE source = 'hltb_match' AND subject = ?",
-            (f"{new_plat}:{title_id}", f"{old_plat}:{title_id}"),
+            "UPDATE fetch_state SET subject = ? WHERE source = 'hltb_match' AND subject = ?"
+            " AND NOT EXISTS (SELECT 1 FROM fetch_state o"
+            "  WHERE o.source = fetch_state.source AND o.subject = ?)",
+            (f"{new_plat}:{title_id}", f"{old_plat}:{title_id}", f"{new_plat}:{title_id}"),
         )
         await self._conn.execute(
             "DELETE FROM fetch_state WHERE source = 'hltb_match' AND subject = ?",
             (f"{old_plat}:{title_id}",),
         )
         await self._conn.execute(
-            "UPDATE OR IGNORE fetch_state SET subject = ?"
-            " WHERE source = 'steam_app' AND subject = ?",
-            (f"{new_plat}:{title_id}", f"{old_plat}:{title_id}"),
+            "UPDATE fetch_state SET subject = ? WHERE source = 'steam_app' AND subject = ?"
+            " AND NOT EXISTS (SELECT 1 FROM fetch_state o"
+            "  WHERE o.source = fetch_state.source AND o.subject = ?)",
+            (f"{new_plat}:{title_id}", f"{old_plat}:{title_id}", f"{new_plat}:{title_id}"),
         )
         await self._conn.execute(
             "DELETE FROM fetch_state WHERE source = 'steam_app' AND subject = ?",
@@ -567,27 +584,33 @@ class _CatalogRepo:
                 (json.dumps(list(dict.fromkeys(moved))), int(row[0])),
             )
         await self._conn.execute(
-            "UPDATE OR IGNORE title_guide_reads SET platform = ?"
-            " WHERE platform = ? AND title_id = ?",
-            (new_plat, old_plat, title_id),
+            "UPDATE title_guide_reads SET platform = ? WHERE platform = ? AND title_id = ?"
+            " AND NOT EXISTS (SELECT 1 FROM title_guide_reads o WHERE o.platform = ?"
+            "  AND o.title_id = title_guide_reads.title_id"
+            "  AND o.guide_id = title_guide_reads.guide_id)",
+            (new_plat, old_plat, title_id, new_plat),
         )
         await self._conn.execute(
             "DELETE FROM title_guide_reads WHERE platform = ? AND title_id = ?",
             (old_plat, title_id),
         )
         await self._conn.execute(
-            "UPDATE OR IGNORE seen_achievements SET platform = ? "
-            "WHERE title_id = ? AND platform = ?",
-            (new_plat, title_id, old_plat),
+            "UPDATE seen_achievements SET platform = ? WHERE title_id = ? AND platform = ?"
+            " AND NOT EXISTS (SELECT 1 FROM seen_achievements o WHERE o.platform = ?"
+            "  AND o.xuid = seen_achievements.xuid AND o.title_id = seen_achievements.title_id"
+            "  AND o.achievement_id = seen_achievements.achievement_id)",
+            (new_plat, title_id, old_plat, new_plat),
         )
         await self._conn.execute(
             "DELETE FROM seen_achievements WHERE title_id = ? AND platform = ?",
             (title_id, old_plat),
         )
         await self._conn.execute(
-            "UPDATE OR IGNORE title_achievements SET platform = ? "
-            "WHERE title_id = ? AND platform = ?",
-            (new_plat, title_id, old_plat),
+            "UPDATE title_achievements SET platform = ? WHERE title_id = ? AND platform = ?"
+            " AND NOT EXISTS (SELECT 1 FROM title_achievements o WHERE o.platform = ?"
+            "  AND o.title_id = title_achievements.title_id"
+            "  AND o.achievement_id = title_achievements.achievement_id)",
+            (new_plat, title_id, old_plat, new_plat),
         )
         await self._conn.execute(
             "DELETE FROM title_achievements WHERE title_id = ? AND platform = ?",

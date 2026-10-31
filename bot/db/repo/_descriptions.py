@@ -210,8 +210,7 @@ class _DescriptionsRepo:
 
     async def uncached_descriptions(self) -> list[tuple[str, str, str, int, str]]:
         """Every stored achievement that has a description but no cache entry
-        — the whole input of the one-time backfill
-        (scripts/backfill_descriptions.py, #48).
+        (#48).
 
         Returns (platform, title_id, achievement_id, person_id, external_id) so
         the caller can group by title and still know whose credentials can be
@@ -256,8 +255,7 @@ class _DescriptionsRepo:
         the title would be given up for the rest of the process while somebody
         else could have answered. A title only dead logins hold waits. Not
         so on PSN, where one account's answer lists only its own trophies
-        unless asked for the whole list (scripts/backfill_descriptions.py
-        does, #50).
+        unless asked for the whole list (#50).
         """
         placeholders = ", ".join("?" * len(platforms))
         cursor = await self._conn.execute(
@@ -324,8 +322,8 @@ class _DescriptionsRepo:
         translator (or are waiting on it, `fallback`) — for a platform whose
         English text is already stored, so no request is needed (#127)."""
         cursor = await self._conn.execute(
-            "SELECT s.achievement_id, d.description_ru,"
-            "       COALESCE(d.description_en, s.description) AS english "
+            "SELECT s.achievement_id, MAX(d.description_ru) AS description_ru,"
+            "       COALESCE(MAX(d.description_en), MAX(s.description)) AS english "
             "FROM seen_achievements s "
             + OWNED_BY_PERSON
             + _CATALOG_ROW
@@ -337,6 +335,22 @@ class _DescriptionsRepo:
         )
         return {
             row["achievement_id"]: (row["description_ru"], row["english"])
+            for row in await cursor.fetchall()
+        }
+
+    async def catalog_untranslated_descriptions(
+        self, platform: str, title_id: str
+    ) -> dict[str, tuple[str | None, str]]:
+        """The same for a game's whole list, earned or not, from the catalog."""
+        cursor = await self._conn.execute(
+            "SELECT achievement_id, description_ru, description_en FROM title_achievements"
+            " WHERE platform = ? AND title_id = ?"
+            "  AND (description_source IS NULL OR description_source = 'fallback')"
+            "  AND TRIM(COALESCE(description_en, '')) <> ''",
+            (platform, title_id),
+        )
+        return {
+            row["achievement_id"]: (row["description_ru"], row["description_en"])
             for row in await cursor.fetchall()
         }
 

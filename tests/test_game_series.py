@@ -17,6 +17,7 @@ from bot.services.game_series import (
     series_name,
     series_questions,
 )
+from tests.conftest import TEST_SCHEMA
 
 
 def _games(*rows: tuple) -> dict[int, SeriesGame]:
@@ -128,10 +129,11 @@ async def _game(repo: Repo, name: str, year: int, developer: str = "Studio") -> 
     # A live game has a version.
     cur = await repo._conn.execute(
         "INSERT INTO versions (store, product_id, console, name, updated_at)"
-        " VALUES ('steam', ?, 'steam', ?, 'now')",
+        " VALUES ('steam', ?, 'steam', ?, 'now') RETURNING version_id",
         (f"p{game}", name),
     )
-    await repo.write_members({int(cur.lastrowid): (game, "version", None, None)})
+    version = int((await cur.fetchone())[0])
+    await repo.write_members({version: (game, "version", None, None)})
     return game
 
 
@@ -231,7 +233,7 @@ async def test_a_label_between_two_games_proposes_their_series(repo: Repo) -> No
     assert await _members(repo) == {"Sonic": games}
 
 
-async def test_the_viewer_shows_and_edits_series(repo: Repo, tmp_path) -> None:
+async def test_the_viewer_shows_and_edits_series(repo: Repo, database, tmp_path) -> None:
     from aiohttp.test_utils import TestClient, TestServer
 
     from scripts.catalog_viewer import build
@@ -240,7 +242,7 @@ async def test_the_viewer_shows_and_edits_series(repo: Repo, tmp_path) -> None:
     reach = await _game(repo, "Halo: Reach", 2010)
     await SeriesBuilder(repo).rebuild()
     halo = await _series_id(repo, "Halo")
-    app = build(tmp_path / "test.db")
+    app = build(database._dsn, TEST_SCHEMA, data_dir=tmp_path)
     app.on_startup.clear()
     app.on_cleanup.clear()
     app["repo"] = repo
@@ -338,7 +340,8 @@ async def test_a_series_a_rule_names_is_kept_by_its_key_and_never_merged(repo: R
     await SeriesBuilder(repo).rebuild()  # again: the same series, not new ones
 
     cursor = await repo._conn.execute(
-        "SELECT s.name, s.rule_key, s.anchor_game_id, group_concat(gs.game_id) FROM series s"
+        "SELECT s.name, s.rule_key, s.anchor_game_id, string_agg(gs.game_id::text, ',') FROM"
+        " series s"
         " JOIN game_series gs ON gs.series_id = s.series_id WHERE s.rule_key IS NOT NULL"
         " GROUP BY s.series_id"
     )
@@ -378,7 +381,7 @@ def test_a_sure_label_between_two_series_never_chains_them() -> None:
     assert series == {"Halo": {1, 2, 3}, "Gears of War": {3, 4, 2}}
 
 
-async def test_one_series_answered_in_the_review_says_which(repo: Repo, tmp_path) -> None:
+async def test_one_series_answered_in_the_review_says_which(repo: Repo, database, tmp_path) -> None:
     """ "Another of the series" names the series (owner, 2026-10-24): the
     answer is the label, and both games are put in that series by hand — an
     existing one by id, or one typed by name. A label relinks, so the games
@@ -397,7 +400,7 @@ async def test_one_series_answered_in_the_review_says_which(repo: Repo, tmp_path
         cur = await repo._conn.execute("SELECT game_id FROM games WHERE name = ?", (name,))
         return str((await cur.fetchone())[0])
 
-    app = build(tmp_path / "test.db")
+    app = build(database._dsn, TEST_SCHEMA, data_dir=tmp_path)
     app.on_startup.clear()
     app.on_cleanup.clear()
     app["repo"] = repo

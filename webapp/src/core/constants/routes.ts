@@ -19,6 +19,8 @@ export const USER_ROUTES = {
   DISCONNECT_STEAM: "/disconnect/steam",
   CONNECT_PSN: "/connect/psn",
   DISCONNECT_PSN: "/disconnect/psn",
+  PSN_TOKEN: "/psn/token",
+  CONNECT_PSN_TOKEN: "/connect/psn-token",
   SYNC_XBOX: "/sync/xbox",
   CHAT: (chatId: number) => `/chats/${chatId}`,
   ACCOUNT: (platform: string) => `/accounts/${platform}`,
@@ -48,7 +50,10 @@ export const ADMIN_ROUTES = {
   USERS: "/users",
   /** A person by their own id (#156): somebody who signed in by email has no Telegram id. */
   USER: (personId: number) => `/users/p${personId}`,
+  ROLE: (personId: number) => `/users/p${personId}/role`,
   CHATS: "/chats",
   CHAT_SETTINGS: (chatId: number) => `/chats/${chatId}/settings`,
+  /** A chat's one admin (#232). */
+  CHAT_ADMIN: (chatId: number) => `/chats/${chatId}/admin`,
   ACTIONS: "/actions",
 } as const;

@@ -198,6 +198,22 @@ async def test_a_pass_name_waits_for_the_publish(repo: Repo) -> None:
     assert (await repo.pass_season("2026-11"))["title"] == "Halloween"
 
 
+async def test_a_pass_cover_waits_for_the_publish(repo: Repo) -> None:
+    await repo.set_pass_season_title("2026-12", "Winter")
+    assert await repo.set_pass_season_image("2026-12", "a.jpg") is None
+    season = await repo.pass_season("2026-12")
+    assert season["image_path"] is None and season["draft_image_path"] == "a.jpg"
+    assert season["draft_title"] == "Winter"
+    # A second draft picture leaves the first unused, to delete.
+    assert await repo.set_pass_season_image("2026-12", "b.jpg") == "a.jpg"
+    await repo.publish_pass("2026-12")
+    season = await repo.pass_season("2026-12")
+    assert season["image_path"] == "b.jpg" and season["title"] == "Winter"
+    await repo.set_pass_season_image("2026-12", "c.jpg")
+    assert await repo.discard_pass_draft("2026-12") == ["c.jpg"]
+    assert (await repo.pass_season("2026-12"))["image_path"] == "b.jpg"
+
+
 def test_level_notices_carry_every_level_or_only_prizes() -> None:
     assert carries(frozenset(), "pass_level", {"prize": False}, friend=False)
     only = frozenset({"pass_level:prizes"})
@@ -286,5 +302,77 @@ async def test_a_draft_picture_shows_only_through_the_editors_address(
         assert (await client.get(plain + "&draft=1")).status == 404
         assert (await client.get(signed.replace("&s=", "&s=0"))).status == 404
         assert (await client.get(signed)).status == 200
+    finally:
+        await client.close()
+
+
+async def test_roles_open_the_editor_and_only_a_superadmin_gives_them(
+    repo: Repo, settings: Settings, monkeypatch
+) -> None:
+    admin_tg = settings.superadmin_tg_ids[0]
+    client, headers = await _client(repo, settings, monkeypatch, admin_tg, {"n": 0})
+    await repo.ensure_superadmins([admin_tg])
+    await repo.ensure_user(601, "helper")
+    helper = await repo.person_id(601)
+    helper_headers = {
+        "X-Telegram-Init-Data": _signed_init_data(settings.bot_token.get_secret_value(), 601)
+    }
+    try:
+        me = await (await client.get("/api/mini/me", headers=headers)).json()
+        assert me["role"] == "superadmin"
+        # An ordinary person edits nothing and gives nothing.
+        state = await (await client.get("/api/mini/pass", headers=helper_headers)).json()
+        assert not state["admin"]
+
+        def step(target: int, action: str, n: int) -> dict:
+            return {"scope": "user", "target": f"p{target}", "action": action, "step": n}
+
+        res = await client.post(
+            "/api/mini/admin/actions", json=step(helper, "make_admin", 0), headers=helper_headers
+        )
+        assert res.status == 403
+        # The super-admin makes them an admin, one step and confirmed, as the
+        # bot's card does: the editor opens, roles stay shut.
+        res = await client.post(
+            "/api/mini/admin/actions", json=step(helper, "make_admin", 0), headers=headers
+        )
+        confirm = (await res.json())["confirm"]
+        res = await client.post(
+            "/api/mini/admin/actions",
+            json=step(helper, "make_admin", confirm["step"]),
+            headers=headers,
+        )
+        assert (await res.json())["done"]["ok"]
+        assert await repo.person_role(helper) == "admin"
+        state = await (await client.get("/api/mini/pass", headers=helper_headers)).json()
+        assert state["admin"]
+        # No jump past a step: user → super-admin is no action at all.
+        role = await (
+            await client.get(f"/api/mini/admin/users/p{helper}/role", headers=headers)
+        ).json()
+        assert role["role"] == "admin"
+        me_id = await repo.person_id(admin_tg)
+        res = await client.post(
+            "/api/mini/admin/actions",
+            json=step(me_id, "unmake_superadmin", 1),
+            headers=helper_headers,
+        )
+        assert res.status == 403 or not (await res.json())["done"]["ok"]
+        assert await repo.person_role(me_id) == "superadmin"
+    finally:
+        await client.close()
+
+
+async def test_only_the_pass_s_own_page_counts_as_seen(
+    repo: Repo, settings: Settings, monkeypatch
+) -> None:
+    client, headers = await _client(repo, settings, monkeypatch, 42, {"n": 0})
+    person = await repo.person_id(42)
+    try:
+        state = await (await client.get("/api/mini/pass", headers=headers)).json()
+        month = state["month"]
+        assert not await repo.pass_seen_in(person, month)
+        assert (await client.post("/api/mini/pass/seen", headers=headers)).status == 200
+        assert await repo.pass_seen_in(person, month)
     finally:
         await client.close()

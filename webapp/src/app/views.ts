@@ -20,14 +20,15 @@ export function achOfFeed(item: FeedItem): AchView {
     titleId: item.title_id,
     achievementId: item.achievement_id,
     game: item.game,
-    gameIcon: item.game_icon_url,
+    gameIcon: item.game_poster ?? item.game_icon_url,
+    gameId: item.game_id ?? null,
     person: { id: item.person_id, name: item.person },
   };
 }
 
 export function achOfList(
   a: GameAchievement,
-  list: { platform: string; titleId: string; game: string | null; icon: string | null },
+  list: { platform: string; titleId: string; game: string | null; icon: string | null; gameId?: number | null },
   person: { id: number; name: string } | null,
   locale: Locale,
 ): AchView {
@@ -46,16 +47,18 @@ export function achOfList(
     achievementId: a.achievement_id,
     game: list.game,
     gameIcon: list.icon,
+    gameId: list.gameId ?? null,
     person: a.is_unlocked ? person : null,
   };
 }
 
 export function gameRefOfFeed(item: FeedItem): GameRef {
   return {
+    game_id: item.game_id ?? undefined,
     platform: item.platform,
     title_id: item.title_id,
     name: item.game,
-    icon_url: item.game_icon_url,
+    icon_url: item.game_poster ?? item.game_icon_url,
     person: { person_id: item.person_id, name: item.person },
   };
 }
@@ -72,7 +75,7 @@ export type Tier = "mythic" | "legendary" | "rare";
 /** The app's own points (owner, 2026-10-27), one scale for every platform
  * in place of Xbox's gamerscore — the server counts them the same way
  * (`_sql.points`). Tens, so a step between can come later. */
-export const POINTS = { common: 10, rare: 20, legendary: 30, mythic: 50 } as const;
+export const POINTS = { common: 10, rare: 20, legendary: 30, mythic: 100 } as const;
 
 export function pointsOf(rarity: number | null, special?: { trophy?: string | null; mythic?: boolean }): number {
   return POINTS[rareLevel(rarity, special) ?? "common"];

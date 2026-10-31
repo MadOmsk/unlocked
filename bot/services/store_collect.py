@@ -17,9 +17,10 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import timedelta
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from bot.services import edition_media
 from bot.services.admin_settings import STORE_COLLECTION_DEFAULT, STORE_COLLECTION_KEY
@@ -103,6 +104,11 @@ class StoreCollector:
         self._locks: dict[tuple[str, str], asyncio.Lock] = {}
         self._running: dict[tuple[str, str], asyncio.Task[CollectReport]] = {}
         self._background: set[asyncio.Task[None]] = set()
+        # Told the games a collection put a list in, so their descriptions
+        # are translated (`GameTranslator.later`); the bot sets it, scripts not.
+        self.on_games: Callable[[list[int]], None] | None = None
+        # The game's translator, for the Mini App's pages (the same object).
+        self.translator: Any = None
 
     def ensure(self, platform: str, title_id: str, *, reason: str = "published") -> None:
         """Collect the game in the background if anything about it is due —
@@ -125,7 +131,10 @@ class StoreCollector:
             # The octopus's key for a list (`octopus.list_key`); a key in the
             # queue already stays as it is.
             await self._repo.octopus_enqueue(f"list:{platform}:{title_id}", reason)
-            return await self.collect(platform, title_id)
+            report = await self.collect(platform, title_id)
+            if self.on_games is not None and report.games:
+                self.on_games(report.games)
+            return report
         except Exception:
             log.exception("store collection failed for %s %s", platform, title_id)
             return CollectReport(platform, title_id, errors=["crashed"])
@@ -204,6 +213,13 @@ class StoreCollector:
             await self._repo.record_fetch(subject, source, status="ok", changed=changed)
             return
         version = steam_store.parse_app(data, data_ru)
+        # The poster and head of now, which `appdetails` does not give: best effort.
+        try:
+            art = (await steam_store.library_art([appid])).get(str(appid), {})
+        except Exception as exc:
+            art = {}
+            log.info("steam library art of %s not read: %r", appid, exc)
+        version.media.update(art)
         version_id = await self._repo.save_version(
             version,
             platform="steam" if ours else None,

@@ -73,7 +73,15 @@ is two such blocks and a swatch, nothing else. **A game's page takes a muted
 scheme from its own art** (`app/artTheme.ts`), over whichever palette is on,
 and so do the pages inside it — its achievements, one achievement, its
 gallery, a post of its (`rememberGameArt` / `gameArtOf`: the same picture,
-so the same colours).
+so the same colours). The colour is the picture's **dominant** one (the
+busiest hue, not the average of all of them), as strong as the picture is
+vivid. **A season's cover colours its month card in a deeper form** (owner,
+2026-10-30; `useArtTheme(url, true)`; the pass page takes the game page's
+muted scheme): the containers
+and the cards inside sit halfway in its colour, with light text, since an
+orange or a yellow held as dark as the page is only brown — the one place
+cards are not `surface-1`. The month card does so on Home and on a person's
+page, each month in its own season's colour; the page's ground stays muted.
 
 Platform marks keep the platforms' own colours (Xbox green, PlayStation blue,
 Steam slate); nothing else is coloured outside the tokens.
@@ -95,8 +103,11 @@ Roboto Flex, variable. **Width is a voice**: numbers are narrow and heavy
 | `.t-meta` | 13 / 400, `--on-surface-3` | dates, counts, sources |
 | `.t-num` | narrow, 800 | any number shown as a value |
 
-Lists of achievements write their worth as one meta line (`20 очков · 6,3 % ·
-12 октября`, `AchMarks plain`), rarity coloured by how rare; chips are for
+**Points are a coin** (owner, 2026-10-29; `PointsCoin`): the logo's
+sparkle (`--tertiary`) and the number beside it, no ground — never «20 очков» after an achievement. Totals (a month's, a list's)
+stay a number with its word.
+
+Lists of achievements write their worth as one meta line (the coin, then `6,3 %`, `AchMarks plain`), rarity coloured by how rare; chips are for
 filters and states, not for every value.
 
 ## Space and shape
@@ -150,7 +161,7 @@ mythic, second legendary, third rare (the podium, the leaders' marks). Use
 the tiers for rank and rarity only.
 
 **Points are the app's own** (owner, 2026-10-27): an achievement is worth
-its tier — common 10, rare 20, legendary 30, mythic 50 (`views.POINTS`, the
+its tier — common 10, rare 20, legendary 30, mythic 100 (`views.POINTS`, the
 server's `_sql.points`) — on every platform, in place of Xbox's G. Rankings,
 the month card and the share of the circle count points. Tens leave room for
 a step between.
@@ -202,6 +213,7 @@ done mark and a heart pop (`heart-pop`). Reduced motion keeps only fades.
 | `Wave`, `WaveRing` | progress |
 | `LinkCard` | a way to somewhere else — the game of a post or an achievement, a guide video: picture, title, a line, a round mark of where it goes |
 | `AchTile` (parts) | one achievement as a card of a rail — Home's latest, the hunts, the rare finds; people under it or what it is worth; a rarity flower when asked |
+| `.translating` | a text whose translation is on its way, in place, blurred: the page asks again and the blur goes |
 | `Empty`, skeletons (`.skel`, `MagazineSkel`) | nothing yet; on its way — a skeleton has the shape of what will come, never a spinner in the middle of a screen |
 | `Viewer` (`openImage`) | a picture or a trailer full screen; a list of them — a game's gallery, trailers and pictures together — slides |
 | `RichText` | a post's or a guide's text: paragraphs, lists, links (bare addresses too), pictures, videos |
@@ -213,9 +225,19 @@ recent achievements, an achievement row, the month's
 games, months, favorite games, the follow button, the kind mark — «Патч» /
 «Новость», one look everywhere —, the game link, the account row).
 
+**The season pass is headed as an achievement is** (owner, 2026-10-28):
+`Page hero` over a `Hero full` — the month's cover edge to edge, the months'
+arrows as `glass` buttons on it —, a `flower6` on its corner with the days
+left where an achievement wears its rarity (`primary`), then a
+`chip-secondary` «Сезон · Октябрь» and the season's name as `.detail-title`;
+«Ты здесь» is a `primary-container` card on its timeline, one line of what
+the next level still needs.
+
 **A page about a list of one thing** — a game's achievements, its gallery —
-is the same page: `Page hero` over a `Hero` (the game's cover on its blurred
-ground, its name, the count), then a sticky `.list-filter` with a `Segmented`
+is the same page: `Page hero` over a `Hero` (the cover on its
+blurred ground, in its `WaveRing` where there is progress, its name, the
+count; its classes `.list-ring`, `.list-cover`, `.list-name`, `.list-stats`
+are in `ui.css`), then a sticky `.list-filter` with a `Segmented`
 (it stays under the collapsed bar on a solid ground), then the list. A
 section that shows a part of a long list gives its whole as such a page
 («Все N»), not as a sheet. Home's month card counts by day as bars

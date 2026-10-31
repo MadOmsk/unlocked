@@ -2,16 +2,20 @@ import { useState } from "react";
 import { clubApi, type PersonPayload } from "../api";
 import { useLoad } from "../app/useLoad";
 import { PassStrip } from "../screens/season-pass/SeasonPassCard";
+import { usePass } from "../core/season-pass";
+import { passApi } from "../api/season-pass/seasonPassApi";
+import { useArtTheme } from "../app/artTheme";
 import { useApp } from "../app/context";
 import { tick } from "../core/haptic";
 import { formatMonth, currentMonth } from "../core/people-utils";
-import { num, plural } from "../i18n";
+import { num } from "../i18n";
 import { Face } from "../ui/Face";
 import { Icon } from "../ui/Icon";
 import { MonthSheet } from "./Months";
+import { Spark } from "./AchRow";
 
-/** A person's month as one card, by what matters: how many achievements
- * (the points and the games small beside), the place among the people
+/** A person's month as one card, by what matters: the month's points (the
+ * achievements and the games small beside; owner, 2026-10-28), the place among the people
  * followed by the app's own points, and those people in a row — each with
  * their place and how many points the person lacks to pass them (+) or leads
  * them by (−). Home
@@ -48,9 +52,22 @@ export function MonthHero({
   const list = months?.length ? months : [month];
   const label = formatMonth(month, locale, "sheet");
   // The pass is this month's: another month shows its race.
-  const pass = season && month === currentMonth();
+  const thisMonth = month === currentMonth();
+  const pass = season && thisMonth;
+  const passState = usePass(data);
+  // An earlier month's season, as the arrows switch to it.
+  const pastSeason = useLoad(!thisMonth ? `hero-season:${month}` : null, () => passApi.fetchPass(data, { month }));
+  const shownSeason = thisMonth ? passState : (pastSeason.data ?? null);
+  // This month's season is remembered on the device, so a visit draws it at
+  // once rather than a moment later.
+  const remembered = thisMonth && !passState ? recallSeason(month) : null;
+  if (thisMonth && passState) rememberSeason(month, passState.title, passState.image ?? null);
+  // The season's name is Home's; its colours, from its cover, every card's
+  // (owner, 2026-10-30), so each month's card looks its own.
+  const seasonTitle = season ? (shownSeason?.title ?? remembered?.title ?? null) : null;
+  const tint = useArtTheme(shownSeason?.image ?? remembered?.image ?? null, true);
   return (
-    <section className="home-hero">
+    <section className="home-hero" style={tint.style}>
       <span className="home-hero-deco shape-clover4" aria-hidden="true" />
       {onMonth ? (
         <div className="home-hero-nav">
@@ -62,11 +79,16 @@ export function MonthHero({
       ) : (
         <p className="home-hero-month">{label.split(" ")[0].toUpperCase()}</p>
       )}
+      {seasonTitle && <p className="home-hero-season clamp-1">{seasonTitle}</p>}
       {pick && onMonth && <MonthSheet months={list} value={month} onChange={onMonth} onClose={() => setPick(false)} />}
       <div className="home-hero-main">
         <div className="home-hero-text">
           {payload ? (
-            <p className="t-display home-hero-num">{num(payload.month.count, locale)}</p>
+            // Points run to five digits and more: the more digits, the smaller.
+            <p className={`t-display home-hero-num home-hero-num-${Math.min(7, num(payload.month.points ?? 0, locale).length)}`}>
+              <Spark className="home-hero-spark" />
+              {num(payload.month.points ?? 0, locale)}
+            </p>
           ) : (
             <span className="home-hero-ghost home-hero-ghost-num" />
           )}
@@ -79,21 +101,6 @@ export function MonthHero({
           </span>
         )}
       </div>
-      {payload ? (
-        <p className="home-hero-line">
-          <span>{plural(locale, payload.month.count, ["achOne", "achFew", "achMany"])}</span>
-          <span>
-            <b className="t-num">{num(payload.month.points ?? 0, locale)}</b>{" "}
-            {plural(locale, payload.month.points ?? 0, ["ptsOne", "ptsFew", "ptsMany"])}
-          </span>
-          <span>
-            <b className="t-num">{num(payload.games.length, locale)}</b>{" "}
-            {plural(locale, payload.games.length, ["gameOne", "gameFew", "gameMany"])}
-          </span>
-        </p>
-      ) : (
-        <span className="home-hero-ghost home-hero-ghost-line" />
-      )}
       {!ready && (
         <div className="home-hero-people rail" aria-hidden="true">
           {[0, 1, 2, 3, 4].map((i) => (
@@ -147,4 +154,23 @@ export function MonthHero({
       {pass && <PassStrip />}
     </section>
   );
+}
+
+const SEASON_KEY = "home-season";
+
+function recallSeason(month: string): { title: string | null; image?: string | null } | null {
+  try {
+    const saved = JSON.parse(localStorage.getItem(SEASON_KEY) ?? "null");
+    return saved && saved.month === month ? saved : null;
+  } catch {
+    return null;
+  }
+}
+
+function rememberSeason(month: string, title: string | null, image: string | null): void {
+  try {
+    localStorage.setItem(SEASON_KEY, JSON.stringify({ month, title, image }));
+  } catch {
+    // A private window keeps nothing: the card waits for the server then.
+  }
 }

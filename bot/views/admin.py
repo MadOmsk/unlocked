@@ -13,11 +13,13 @@ reason: poller/admin_refresh.py redraws it on a timer.
 from __future__ import annotations
 
 from collections.abc import Callable
+from html import escape as html_escape
 from typing import Literal
 
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
+from bot.config import Settings
 from bot.constants import (
     AccountPlatform,
     Platform,
@@ -27,9 +29,10 @@ from bot.constants import (
 )
 from bot.db.repo import AdminUserRow, ChatTarget, PlatformLink, Repo, User
 from bot.i18n import translator
+from bot.services import roles
 from bot.services.admin_actions import ActionView, AdminContext, Confirm, Target
 from bot.services.admin_actions import available as available_actions
-from bot.services.admin_credentials import AdminCredentials
+from bot.services.admin_credentials import AdminCredentials, CredentialState
 from bot.services.admin_registry import GROUPS, group_label
 from bot.services.admin_registry import values as registry_values
 from bot.services.admin_settings import (
@@ -37,6 +40,7 @@ from bot.services.admin_settings import (
     STATUS_ICON,
     VISIBILITY_ICON,
 )
+from bot.services.admin_status import admin_status
 from bot.services.logins import Login, logins_of
 from bot.services.naming import (
     account_nickname,
@@ -45,9 +49,11 @@ from bot.services.naming import (
     subscriber_names,
     xbox_nickname,
 )
+from bot.services.roles import FULL, Access
 from bot.services.stats import month_cutoff_utc, today_cutoff_utc
 from bot.util import humanize_ago, real_game_name
 from bot.views import Screen
+from bot.views.admin_home import usage_by_credential
 from bot.views.admin_settings import action_rows, setting_rows
 from bot.views.inline_lists import InlineListing, button_rows, page_nav, paginate
 from bot.views.keyboards import (
@@ -81,38 +87,113 @@ def _cancel_input_keyboard(*, locale: str) -> InlineKeyboardMarkup:
 # ---- Platform keys (#17) ----
 
 
+def key_icon(state: CredentialState) -> str:
+    """A credential's state at a glance (#233): set and working, set and
+    refused, or not set at all."""
+    if not state.configured:
+        return "⚪️"
+    return "⚠️" if state.status == TokenStatus.INVALID else "✅"
+
+
 async def render_keys(
-    credentials: AdminCredentials, *, locale: str
+    credentials: AdminCredentials, repo: Repo, *, locale: str
 ) -> tuple[str, InlineKeyboardMarkup]:
-    """One line and one set of buttons per credential, from the registry the
-    Mini App walks too (#176)."""
+    """One button per credential with its state (#233; agreed on a mockup,
+    2026-10-29), from the registry the Mini App walks too (#176); inside each
+    its state, load and actions. Beside them, the players' own PSN tokens."""
     _ = translator("admin", locale)
     states = await credentials.states()
-    lines = [_("admin-keys-title"), ""]
+    buttons = [
+        InlineKeyboardButton(
+            text=key_icon(state) + " " + _("admin-keys-" + state.name + "-label"),
+            callback_data="a:key:" + state.name,
+        )
+        for state in states
+    ]
     builder = InlineKeyboardBuilder()
-    for state in states:
+    for i in range(0, len(buttons), 2):
+        builder.row(*buttons[i : i + 2])
+    alive, dead = await repo.psn_token_counts()
+    builder.row(
+        InlineKeyboardButton(
+            text=_("admin-keys-personal-button", alive=alive, dead=dead),
+            callback_data="a:psntok",
+        )
+    )
+    builder.row(InlineKeyboardButton(text=_("admin-back"), callback_data="a:home"))
+    return "\n".join([_("admin-keys-title"), "", _("admin-keys-tap")]), builder.as_markup()
+
+
+async def render_key(
+    credentials: AdminCredentials, repo: Repo, name: str, *, locale: str
+) -> tuple[str, InlineKeyboardMarkup]:
+    """One credential (#233): its state, when it was last checked, its load,
+    where to get it, and what can be done with it. The value is never shown."""
+    _ = translator("admin", locale)
+    state = await credentials.state(name)
+    if not state.configured:
+        status = _("admin-key-status-unset")
+    elif state.status == TokenStatus.INVALID:
+        status = _("admin-key-status-dead")
+    else:
+        status = _("admin-key-status-alive")
+    lines = [_("admin-key-title", label=_("admin-keys-" + name + "-label")), "", status]
+    if state.configured and state.checked_at:
+        lines.append(_("admin-key-checked", ago=humanize_ago(state.checked_at, locale)))
+    usage = usage_by_credential(await admin_status(repo, credentials=credentials), locale=locale)
+    if name in usage:
+        lines.append(_("admin-key-usage", usage=usage[name]))
+    if name == "psn":
+        alive, dead = await repo.psn_token_counts()
         lines.append(
             _(
-                "admin-keys-line",
-                label=_(f"admin-keys-{state.name}-label"),
-                state=_("admin-keys-set") if state.configured else _("admin-keys-unset"),
+                "admin-key-psn-reads",
+                shared=await repo.psn_accounts_without_token(),
+                alive=alive,
+                dead=dead,
             )
         )
-        action = "change" if state.configured else "add"
+    lines += ["", _("admin-keys-" + name + "-hint")]
+    builder = InlineKeyboardBuilder()
+    action = "change" if state.configured else "add"
+    builder.row(
+        InlineKeyboardButton(
+            text=_("admin-keys-" + name + "-" + action), callback_data="a:keyset:" + name
+        )
+    )
+    if state.configured:
         builder.row(
             InlineKeyboardButton(
-                text=_(f"admin-keys-{state.name}-{action}"),
-                callback_data=f"a:keyset:{state.name}",
+                text=_("admin-keys-" + name + "-clear"), callback_data="a:keyclr:" + name
             )
         )
-        if state.configured:
-            builder.row(
-                InlineKeyboardButton(
-                    text=_(f"admin-keys-{state.name}-clear"),
-                    callback_data=f"a:keyclr:{state.name}",
-                )
-            )
-    builder.row(InlineKeyboardButton(text=_("admin-back"), callback_data="a:home"))
+    builder.row(InlineKeyboardButton(text=_("admin-keys-back"), callback_data="a:keys"))
+    return "\n".join(lines), builder.as_markup()
+
+
+async def render_psn_tokens(repo: Repo, *, locale: str) -> tuple[str, InlineKeyboardMarkup]:
+    """The players' own PSN tokens (#233): whose, which account, working or
+    not — never a token itself."""
+    _ = translator("admin", locale)
+    rows = await repo.psn_token_overview()
+    lines = [_("admin-psntok-title"), ""]
+    builder = InlineKeyboardBuilder()
+    for row in rows:
+        name = html_escape(row["display_name"] or row["account_id"])
+        who = html_escape(person_name(person_id=row["person_id"], handle=row["handle"]))
+        if row["status"] == "active":
+            ago = humanize_ago(row["checked_at"], locale)
+            lines.append(_("admin-psntok-alive", name=name, who=who, ago=ago))
+        else:
+            ago = humanize_ago(row["dead_at"], locale)
+            lines.append(_("admin-psntok-dead", name=name, who=who, ago=ago))
+        builder.row(
+            InlineKeyboardButton(text="👤 " + who, callback_data="a:u:p" + str(row["person_id"]))
+        )
+    if not rows:
+        lines.append(_("admin-psntok-none"))
+    lines += ["", _("admin-psntok-note", shared=await repo.psn_accounts_without_token())]
+    builder.row(InlineKeyboardButton(text=_("admin-keys-back"), callback_data="a:keys"))
     return "\n".join(lines), builder.as_markup()
 
 
@@ -144,6 +225,8 @@ async def render_user_list(
         # finds one. The bare id stays reachable as the last step, which on
         # this screen is diagnostic rather than a bad label.
         name = person_name(person_id=user.person_id, handle=user.handle)
+        if mark := roles.badge(user.role):
+            name = f"{name} {mark}"
         rows.append(
             _(
                 "admin-users-row",
@@ -390,14 +473,31 @@ async def _psn_admin_block(
         ),
         _("admin-psn-id-tag", external_id=link.external_id),
         _("admin-login-row", login=visibility_status_text(link, locale)),
+        await _psn_token_row(repo, link.external_id, _, locale),
         "  ·  ".join(parts),
         _("admin-online-row", online=online),
         *_muted_line(link, _),
     ]
 
 
+async def _psn_token_row(repo: Repo, account_id: str, _, locale: str) -> str:
+    """Which token reads this account (#233) — never the token itself."""
+    token = await repo.psn_token(account_id)
+    if token is None:
+        return _("admin-psn-token-shared")
+    if token.status == "active":
+        return _("admin-psn-token-alive", ago=humanize_ago(token.checked_at, locale))
+    return _("admin-psn-token-dead", ago=humanize_ago(token.dead_at, locale))
+
+
 async def render_user_card(
-    repo: Repo, person: int, *, locale: str
+    repo: Repo,
+    person: int,
+    *,
+    locale: str,
+    access: Access = FULL,
+    settings: Settings | None = None,
+    admin_id: int | None = None,
 ) -> tuple[str, InlineKeyboardMarkup]:
     _ = translator("admin", locale)
     user = await repo.get_user(person)
@@ -442,6 +542,7 @@ async def render_user_card(
             chats=", ".join(f"«{c}»" for c in chats) if chats else _("admin-nowhere"),
         ),
         _("admin-rarity", mode=await rarity_label(repo, person, locale=locale)),
+        _("admin-role", role=_(f"admin-role-{roles.stored(await repo.person_role(person))}")),
     ]
     text = "\n".join(lines)
     if user.is_excluded:
@@ -450,7 +551,10 @@ async def render_user_card(
     # The actions come from the registry (#176), the Mini App's card lists the
     # same ones.
     builder = InlineKeyboardBuilder()
-    for row in action_rows(await _actions(repo, "user", Target(person=person), locale)):
+    views = await _actions(
+        repo, "user", Target(person=person), locale, access, settings=settings, admin_id=admin_id
+    )
+    for row in action_rows(views):
         builder.row(*row)
     builder.row(InlineKeyboardButton(text=_("admin-back-to-users"), callback_data="a:users:0"))
     return text, builder.as_markup()
@@ -466,10 +570,19 @@ async def rarity_label(repo: Repo, person: int, *, locale: str) -> str:
 
 
 async def _actions(
-    repo: Repo, scope: Literal["user", "chat", "global"], target: Target, locale: str
+    repo: Repo,
+    scope: Literal["user", "chat", "global"],
+    target: Target,
+    locale: str,
+    access: Access = FULL,
+    *,
+    settings: Settings | None = None,
+    admin_id: int | None = None,
 ):
-    # Listing needs only the database; running one is the handler's.
-    return await available_actions(AdminContext(repo, None), scope, target, locale=locale)  # type: ignore[arg-type]
+    # Listing needs only the database (and, for the roles, who is asking and
+    # who the environment names); running one is the handler's.
+    ctx = AdminContext(repo, settings, access=access, admin_id=admin_id)  # type: ignore[arg-type]
+    return await available_actions(ctx, scope, target, locale=locale)
 
 
 # Plain platform names for the confirm prompt's own sentence — distinct
@@ -477,16 +590,21 @@ async def _actions(
 # spliced into "Стереть базу <label> для...".
 
 
-async def render_chat_list(repo: Repo, *, locale: str) -> tuple[str, InlineKeyboardMarkup]:
+async def render_chat_list(
+    repo: Repo, *, locale: str, access: Access = FULL
+) -> tuple[str, InlineKeyboardMarkup]:
     """Unlike the user list above, this one is buttons only — a chat row is
     two facts wide, and both fit on the button, so there is no separate text
     row to write. It used to call `Listing` with an empty row list to look
     like it shared the text machinery; that rendered nothing, and a keyboard
     list now has machinery of its own to share instead."""
     _ = translator("admin", locale)
-    chats = await repo.admin_chats()
+    # A chat admin sees their own chats, with nothing above them (#232).
+    chats = [chat for chat in await repo.admin_chats() if access.chat(chat.chat_id)]
+    tail = _back_row(locale=locale) if access.app else []
     if not chats:
-        return _("admin-chats-empty"), _back_home(locale=locale)
+        empty = _("admin-chats-empty") if access.app else _("admin-chats-mine-empty")
+        return empty, InlineKeyboardMarkup(inline_keyboard=[tail] if tail else [])
 
     def label(chat: ChatTarget) -> str:
         return _(
@@ -498,13 +616,18 @@ async def render_chat_list(repo: Repo, *, locale: str) -> tuple[str, InlineKeybo
 
     keyboard = InlineListing(
         rows=button_rows(chats, label, lambda chat: f"a:chat:{chat.chat_id}"),
-        tail=_back_row(locale=locale),
+        tail=tail,
     ).markup()
     return _("admin-chats-header"), keyboard
 
 
 async def render_chat_card(
-    repo: Repo, chat_id: int, *, locale: str, section: str | None = None
+    repo: Repo,
+    chat_id: int,
+    *,
+    locale: str,
+    section: str | None = None,
+    access: Access = FULL,
 ) -> tuple[str, InlineKeyboardMarkup]:
     """The chat card. `section` picks which keyboard goes under it: the root
     card, or one of its three sub-screens (2026-09-11, user request — the
@@ -519,7 +642,7 @@ async def render_chat_card(
         return _("admin-chat-not-found-period"), _back_home(locale=locale)
 
     names = subscriber_names(await repo.chat_subscribers(chat_id))
-    zone_label = format_offset(chat.tz_offset_min)
+    zone_label = format_offset(chat.tz, None)
     flood_label = (
         _("admin-chat-flood-value", limit=chat.flood_limit, window=chat.flood_window_minutes)
         if chat.flood_limit > 0
@@ -529,6 +652,8 @@ async def render_chat_card(
         "admin-chat-card",
         title=chat.title or chat_id,
         state=_("admin-active") if chat.is_active else _("admin-inactive"),
+        publishing=_("admin-on") if chat.publishing else _("admin-off"),
+        admin=await chat_admin_name(repo, chat_id, locale=locale),
         subscribers=chat.subscribers,
         summary=_("admin-yes") if chat.daily_summary else _("admin-no"),
         time=chat.daily_summary_time,
@@ -557,7 +682,7 @@ async def render_chat_card(
     if section == "messages":
         # One action per row: the wipes are the destructive ones, and a
         # cramped row of four 🗑 buttons made them easy to mistap (2026-09-11).
-        views = await _actions(repo, "chat", Target(chat_id=chat_id), locale)
+        views = await _actions(repo, "chat", Target(chat_id=chat_id), locale, access)
         for row in action_rows(views, "messages"):
             builder.row(*row)
         builder.row(back_to_card)
@@ -577,7 +702,10 @@ async def render_chat_card(
             text=_("admin-chat-messages-menu-button"), callback_data=f"a:mdel:{chat_id}"
         )
     )
-    for row in action_rows(await _actions(repo, "chat", Target(chat_id=chat_id), locale)):
+    builder.row(
+        InlineKeyboardButton(text=_("admin-chat-admin-button"), callback_data=f"a:ca:{chat_id}")
+    )
+    for row in action_rows(await _actions(repo, "chat", Target(chat_id=chat_id), locale, access)):
         builder.row(*row)
     builder.row(InlineKeyboardButton(text=_("admin-back-to-chats"), callback_data="a:chats"))
     return text, builder.as_markup()
@@ -635,6 +763,62 @@ def render_action_confirm(confirm: Confirm, *, yes: str, back: str, locale: str)
     return Screen(confirm.text, builder.as_markup())
 
 
-async def global_actions(repo: Repo, *, locale: str) -> list[ActionView]:
+async def global_actions(repo: Repo, *, locale: str, access: Access = FULL) -> list[ActionView]:
     """The app's own actions; a settings group shows those of its section."""
-    return await _actions(repo, "global", Target(), locale)
+    return await _actions(repo, "global", Target(), locale, access)
+
+
+# ---------------------------------------------------------------- chat admin
+
+
+async def chat_admin_name(repo: Repo, chat_id: int, *, locale: str) -> str:
+    """The chat admin as the cards name them (#232): their nickname, else
+    their Telegram id — a chat admin may never have used the app."""
+    tg_id = await repo.chat_admin(chat_id)
+    if tg_id is None:
+        return translator("admin", locale)("admin-chat-admin-none")
+    return await tg_name(repo, tg_id)
+
+
+async def tg_name(repo: Repo, tg_id: int) -> str:
+    user = await repo.get_user_by_tg(tg_id)
+    if user is None:
+        return f"tg {tg_id}"
+    return person_name(person_id=user.id, handle=user.handle)  # type: ignore[arg-type]
+
+
+async def render_chat_admin_pick(
+    repo: Repo, chat_id: int, *, locale: str, access: Access, me: int
+) -> Screen:
+    """Who the chat admin role goes to: the chat's known members, one a
+    button. An app admin appoints (and may remove); the chat admin hands
+    their own role on."""
+    _ = translator("admin", locale)
+    current = await repo.chat_admin(chat_id)
+    handing_on = not access.app
+    if handing_on:
+        text = _("admin-chat-admin-hand-on")
+    else:
+        text = _("admin-chat-admin-pick", admin=await chat_admin_name(repo, chat_id, locale=locale))
+    candidates = [
+        (tg_id, person, handle)
+        for tg_id, person, handle in await repo.chat_admin_candidates(chat_id)
+        if tg_id not in (current, me if handing_on else None)
+    ]
+    if not candidates:
+        text += "\n\n" + _("admin-chat-admin-nobody")
+    builder = InlineKeyboardBuilder()
+    for tg_id, person, handle in candidates:
+        builder.button(
+            text=person_name(person_id=person, handle=handle),
+            callback_data=f"a:cap:{chat_id}:{tg_id}",
+        )
+    builder.adjust(2)
+    if access.app and current is not None:
+        builder.row(
+            InlineKeyboardButton(
+                text=_("admin-chat-admin-remove"), callback_data=f"a:cax:{chat_id}:0"
+            )
+        )
+    builder.row(InlineKeyboardButton(text=_("admin-back"), callback_data=f"a:chat:{chat_id}"))
+    return Screen(text, builder.as_markup())

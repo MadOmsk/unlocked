@@ -46,13 +46,17 @@ class _HltbReadRepo:
         an automatic one, then the surer match, then the one most versions
         share, then the lower id. `others`: the rest, as they are named."""
         cursor = await self._conn.execute(
-            "SELECT e.*, MAX(vh.source = 'manual') AS manual, MAX(vh.score) AS score,"
+            "SELECT e.*, MAX(CASE WHEN vh.source = 'manual' THEN 1 ELSE 0 END) AS manual,"
+            " MAX(vh.score) AS score,"
             "  COUNT(DISTINCT vh.version_id) AS n_versions"
             " FROM versions v JOIN version_hltb vh ON vh.version_id = v.version_id"
             " JOIN hltb_entries e ON e.hltb_id = vh.hltb_id"
             f" WHERE v.game_id = ? AND vh.source <> 'rejected' AND e.game_type NOT IN {_ADDITIONAL}"
             " GROUP BY e.hltb_id"
-            " ORDER BY manual DESC, score IS NULL, score DESC, n_versions DESC, e.hltb_id",
+            # The aggregates themselves: PostgreSQL reads an output name inside an
+            # expression as the column, vh.score, not as this MAX.
+            " ORDER BY manual DESC, MAX(vh.score) IS NULL, MAX(vh.score) DESC, n_versions DESC,"
+            " e.hltb_id",
             (game_id,),
         )
         rows = [dict(r) for r in await cursor.fetchall()]
@@ -142,7 +146,8 @@ class _HltbReadRepo:
         leaves the queue."""
         await self._conn.execute(
             "UPDATE hltb_entries SET image_path = ?, image_hash = ?,"
-            " image_checked_at = strftime('%Y-%m-%dT%H:%M:%S', 'now') WHERE hltb_id = ?",
+            " image_checked_at = to_char(now() AT TIME ZONE 'utc', 'YYYY-MM-DD\"T\"HH24:MI:SS')"
+            " WHERE hltb_id = ?",
             (path, digest, hltb_id),
         )
         await self._conn.commit()

@@ -18,8 +18,13 @@ on a deep violet ground lit from the top left (`#7457c9` → `#4f378b` →
 it, and `apple-touch-icon.png` and `logo-maskable-512.png` from the same drawing
 as a full-bleed square — iOS and Android round it themselves — with the mark
 inside the safe zone; `badge-96.png` is the white U for a push's one-colour
-badge; `logo-splash-512.png` is the bare U with no tile, the manifest's 512
-`any` icon that Android draws on its launch splash. The sign-in screens write
+badge; `logo-splash-512.png` is the bare U with no tile in its violet light on
+the app's night (`#141218`, the manifest's background, so no edge shows), the manifest's 512
+`any` icon that Android draws on its launch splash (the maskable one is
+only 192 px, so a browser that draws its largest icon there — Edge — draws
+the bare U, not the square tile); an iPhone's launch screen is
+`public/splash/apple-splash-*.png`, the bare U on the app's night in a
+wide violet light fading into it (owner, 2026-10-30), one a screen size (`index.html`). The sign-in screens write
 the name as one word — the logo's U with its sparkle, no tile, then "nlocked" in Nunito ExtraBold, its seven
 letters kept in `public/fonts`) are what the Mini App,
 the installed app, pushes, sign-in emails and the Xbox sign-in page show. The bots keep their Telegram names until changed in
@@ -47,7 +52,7 @@ The rejected-ideas appendix at the end is narrower than design rationale:
 alternatives that were tried or considered and specifically rejected.
 
 Keep the project working after every change — no step should leave it broken. The
-product is optimized for one trusted operator, a single SQLite database, explicit
+product is optimized for one trusted operator, a single PostgreSQL database, explicit
 admin controls, and predictable behavior, not public SaaS scale.
 
 ### Non-goals
@@ -73,7 +78,8 @@ admin controls, and predictable behavior, not public SaaS scale.
 ## Stack
 
 Python 3.12+, aiogram 3, aiohttp (OAuth callback + Mini App API), httpx (platform
-HTTP clients), Pillow (re-encoding uploaded avatars), aiosqlite, APScheduler (`AsyncIOScheduler`), pydantic v2 +
+HTTP clients), Pillow (re-encoding uploaded avatars), psycopg 3 (PostgreSQL, #234;
+aiosqlite stays only to read the old SQLite files: the import tool, old scripts), APScheduler (`AsyncIOScheduler`), pydantic v2 +
 pydantic-settings, cryptography Fernet, xbox-webapi-python, the official Steam Web
 API, psnawp (PSN), howlongtobeatpy, pytest + pytest-asyncio + ruff. The Mini App is
 Vite + React (`webapp/`), with hls.js playing the stores' HLS trailers wherever
@@ -94,8 +100,12 @@ name, or when the tree goes stale.
 ├── .github/workflows/ci.yml   CI on every push; deploys `prerelease` → test server, `main` → prod (#4)
 ├── README.md / README.ru.md   the overview, in English and in Russian
 ├── CLAUDE.md                  this file
+├── .claude/skills/mini-app-design/   the skill that holds any Mini App look to docs/design-system.md,
+│                              and a phone-sized screenshot of the dev server as a signed-in person
 ├── pyproject.toml             dependencies, ruff, pytest config
 ├── manage.ps1 / manage.bat    the dev server's process manager and its double-click dashboard
+├── deploy/                    the server's nginx sites, systemd units and SSH socket, as installed
+│                              by scripts/provision.sh (a fresh Ubuntu 24.04 into the bots' server)
 ├── webapp/                    Telegram Mini App SPA (Vite/React); built by CI, never served by the bot;
 │                              `src/`: `api/`, `i18n/`, `core/` (behaviour), `styles/` + `ui/` (the
 │                              design system, the one source of look), `parts/`, `screens/`, `app/` (shell)
@@ -105,7 +115,7 @@ name, or when the tree goes stale.
 │                              `mini-app-design-brief.md`: the task for that design;
 │                              `design-system.md`: the look, its tokens, components, rules)
 ├── catalog/                   the games catalog's labels and fitted weights, by key (`scripts/catalog_files.py`)
-├── changelog/                 release notes per version: `<v>.ru.md` / `.en.md` (what a chat member
+├── changelog/                 release notes per version (`archive/`: those before 0.3): `<v>.ru.md` / `.en.md` (what a chat member
 │                              notices), `.summary.<locale>.txt` (the announcement's bullets),
 │                              `.contributors.md` (what changed about working here)
 │
@@ -113,6 +123,7 @@ name, or when the tree goes stale.
 │   ├── main.py                  entry point, assembly, router registration
 │   ├── config.py                settings from the environment (pydantic-settings)
 │   ├── lock.py                  "one process per .env" guard
+│   ├── moved.py                 the old bot after a move: points DMs and groups to the new one (#238)
 │   ├── util.py                  small helpers (UTC time, secret masking)
 │   ├── constants.py             shared enums: platforms, badges, setting keys
 │   ├── version.py               A.B.C.D and the "database newer than code" refusal (#56)
@@ -123,6 +134,7 @@ name, or when the tree goes stale.
 │   │   │                        API calls, no layout (#63)
 │   │   ├── connect.py            /start, /connect_xbox, /disconnect_xbox
 │   │   ├── steam.py, psn.py      /connect_* and /disconnect_* for Steam and PSN
+│   │   ├── psn_token.py          a player's own PSN token: its screen, pasting, linking by it (#233)
 │   │   ├── awaiting.py           whose next private message is a profile link, for which platform
 │   │   ├── panel.py              the personal panel, "Мои чаты"
 │   │   ├── chat.py               group commands and the group hub
@@ -134,7 +146,8 @@ name, or when the tree goes stale.
 │   │   │                        database and renders a `Screen` (text, keyboard, photo/gallery), never
 │   │   │                        sends and never decides when it is shown
 │   │   ├── panel.py, chat.py, admin.py, admin_home.py, online.py, summary.py,
-│   │   │   notification.py, hltb.py      one per screen (admin_home and online are redrawn on timers)
+│   │   │   notification.py, hltb.py, psn_token.py   one per screen (admin_home and online are
+│   │   │                                 redrawn on timers)
 │   │   ├── keyboards.py          every inline keyboard, the close button, format_* helpers
 │   │   ├── parts.py              shared vocabulary: badges, platform palette, counted nouns,
 │   │   │                         per-platform header rows, value brackets
@@ -149,6 +162,8 @@ name, or when the tree goes stale.
 │   │   ├── admin_status.py       what the super-admin's home shows, for both panels (#176)
 │   │   ├── admin_credentials.py  every shared credential, one registry for both panels (#176)
 │   │   ├── admin_actions.py      every super-admin action, described once, for both panels (#176)
+│   │   ├── roles.py              who may do what: four roles, one table, `Access` (#232)
+│   │   ├── poll_cadence.py       how often each platform is asked: the admin's steps (#184)
 │   │   ├── admin_accounts.py     refresh / reset one person's game account (an action's work)
 │   │   ├── admin_cleanup.py      wiping the bot's messages from a chat (an action's work)
 │   │   ├── connect.py            one-time OAuth state, finishing a login
@@ -156,6 +171,7 @@ name, or when the tree goes stale.
 │   │   ├── stats.py              aggregates for panels, /stats, summaries
 │   │   ├── models.py, rows.py    ParsedAchievement and its AchievementRow, shared by all platforms
 │   │   ├── naming.py             the naming chains (#51) — the only answer to "what is X called"
+│   │   ├── time_zones.py         a person's or a chat's zone by place: the offered places, local time
 │   │   ├── handles.py            nickname rules: valid, normalized, shown, first one, digits (#157)
 │   │   ├── logins.py             the ways a person signs in, as the admin's cards list them
 │   │   ├── people.py             who may see whom: the relation between two people, `can_view` (#157)
@@ -170,6 +186,8 @@ name, or when the tree goes stale.
 │   │   ├── custom_avatars.py     a picture a person uploads in the Mini App, re-encoded (#157)
 │   │   ├── post_picture.py       a low-res post picture enlarged on a square, at send time
 │   │   ├── game_art.py           a game's poster, hero and header kept on disk, served signed
+│   │   ├── steam_library_art.py  a Steam game's poster and head of now, asked when its page opens
+│   │   ├── manual_games.py       a game added by hand: a store link read into its name
 │   │   ├── media.py              where the games database's pictures live (`MEDIA_DIR`)
 │   │   ├── x360_frame.py         Xbox 360 box art kept without the console's header or bar
 │   │   ├── message_log.py        request middleware: logs every outgoing group message
@@ -198,6 +216,7 @@ name, or when the tree goes stale.
 │   │   ├── label_conflicts.py    labels that contradict each other (#218), no DB access
 │   │   ├── game_page.py          the Mini App's game page put together from the catalog (no network)
 │   │   ├── game_descriptions.py  a game's description translated once, the achievements' rule (#230)
+│   │   ├── news_translations.py, guide_translations.py   Steam posts and guide tips put into the other language
 │   │   ├── crypto.py             Fernet
 │   │   ├── credential_health.py  what one failed liveness check of a shared credential means (#62)
 │   │   ├── rate_limiter.py       shared sliding-window limiter (Xbox, Steam)
@@ -207,9 +226,10 @@ name, or when the tree goes stale.
 │   │   │                         backoff), models.py (pydantic responses)
 │   │   ├── steam/                auth.py (the admin-settable key, #17), client.py, achievements.py
 │   │   │                         (fetch_unlocked + schema/rarity cache)
-│   │   ├── psn/                  auth.py (NPSSO, PsnAuth), client.py (to_thread wrapper),
+│   │   ├── psn/                  auth.py (the shared NPSSO, PsnAuth), personal.py (a player's own
+│   │   │                         NPSSO, #233), client.py (to_thread wrapper),
 │   │   │                         achievements.py (sync_account, one game at a time, #26)
-│   │   ├── translate/            Anthropic API via raw httpx, descriptions and guide-tip pointers, never names:
+│   │   ├── translate/            Anthropic API (Haiku 5.5) via raw httpx, descriptions, news posts and guide-tip pointers, never names:
 │   │   │                         client.py, descriptions.py (cache-or-translate), guide_tips.py (line numbers only), auth.py (#17 shape)
 │   │   └── youtube/              video guides: auth.py (#17 shape), client.py (Data API v3), guides.py (what a
 │   │                             video names, no DB access), videos.py (an achievement's videos)
@@ -225,12 +245,16 @@ name, or when the tree goes stale.
 │   │   ├── avatars.py, covers.py                 pictures, a few per tick (#55)
 │   │   ├── title_platforms.py    Xbox games' platforms, looked up until found (#114)
 │   │   ├── patch_refresh.py      played games' patch notes, re-read every few hours
+│   │   ├── translations.py       the backlog of news posts, guide tips and games' descriptions to translate
 │   │   ├── octopus.py            the octopus's queue, a few games assembled a minute (#215)
+│   │   ├── stand_in_links.py     games made of a list's stand-in alone, linked to their namesakes
+│   │   ├── season_reset.py       TEMPORARY: the first season's pass wiped as the second begins
 │   │   ├── guide_videos.py       guide channels' YouTube videos: the newest page, the whole history weekly
 │   │   ├── psn_trophy_groups.py  the group of PSN trophies stored before #46 (#115)
 │   │   ├── description_backfill.py, rarity_backfill.py, steam_localization.py
 │   │   │                         cache walkers for what polls never bring (#48, #61)
 │   │   ├── reminders.py          reminders for a dead Xbox login
+│   │   ├── season_start.py       the season's start told at noon on the 1st
 │   │   ├── message_cleanup.py    auto-deletes system messages
 │   │   ├── online_refresh.py, admin_refresh.py   self-refreshing /online and /admin
 │   │   └── service_health.py     liveness of the shared credentials
@@ -243,15 +267,20 @@ name, or when the tree goes stale.
 │   │                            mini_notifications.py (the list, push subscriptions),
 │                            mini_invites.py (signing up with an invite, a member's codes),
 │                            mini_passkeys.py (adding, listing, signing in with passkeys),
-│                            mini_pass.py (the season pass: its state, claiming a theme)
+│                            mini_pass.py (the season pass: its state, claiming a theme),
+│                            mini_share.py (a shared post's page with its card's tags)
 │   │
 │   └── db/
-│       ├── schema.sql            full DDL for a brand-new database
+│       ├── postgres.py           psycopg 3 behind aiosqlite's face: placeholders, rows, autocommit,
+│       │                         numbers and dates sent untyped (#234)
+│       ├── pg/                   the PostgreSQL schema: app.sql (a server's own tables), games.sql
+│       │                         (the shared catalog), migrations/ (numbered on from 144)
 │       ├── repo/                 all data access, the only place with SQL; one Repo from mixins
 │       │                         (map in its __init__.py); `_sql.py` holds the shared joins (#52);
-│       │                         `_games_db.py`: which tables are the shared games database (#229)
-│       ├── files.py              a database opened by a script, its games file attached (#229)
-│       └── migrations/           one file per schema change, for existing databases only
+│       │                         `_games_db.py`: which tables are the shared games catalog (#229)
+│       ├── schema.sql, migrations/   the SQLite schema and its history up to 143: the import
+│       │                         tool's tests build a source from them, and it reads the names
+│       └── tools.py              a database opened by a script: `--schema`, `run`, `connect`, `backup`
 │
 ├── scripts/                     one-off operational helpers, outside the running bot
 │   ├── render_screen.py          draws any screen, prints it or sends it to the owner's DM (#63)
@@ -259,8 +288,7 @@ name, or when the tree goes stale.
 │   ├── collect_game.py           collect one game from the stores now (#147), beside a running bot
 │   ├── reparse_store_payloads.py the store side again from the kept answers, no request (#147)
 │   ├── catalog_viewer.py         a bare local, read-only viewer of the games' store side (#147)
-│   ├── catalog_transfer.py       the games catalog carried whole from one database to another (#147)
-│   ├── games_db.py               the shared games database: split it out, join it, leave it (#229)
+│   ├── sqlite_to_pg.py           a server's SQLite files into PostgreSQL: preflight, import, verify (#234)
 │   ├── fit_match_weights.py      the games matcher's weights fitted to the operator's labels (#147)
 │   ├── advise_pairs.py           the matcher's doubtful pairs to Claude and Gemini and back:
 │   │                             export / import / status / apply / conflicts (#147)
@@ -270,8 +298,7 @@ name, or when the tree goes stale.
 │   ├── cache_achievement_icons.py                                   icon pre-caching (#99)
 │   ├── strip_x360_frames.py      the 360 frame cut off the covers and posters already kept
 │   ├── collect_x360_addons.py    a 360 game's add-ons searched once, where never searched yet
-│   └── backfill_*.py             one-offs for data that predates a feature (each names its issue);
-│                                 backfill_rarity.py and backfill_descriptions.py need the bot stopped
+│   ├── translate_game_descriptions.py   every game's description translated at once (#230)
 │
 ├── tests/                       pytest + pytest-asyncio; real platform/Telegram calls forbidden
 ├── backups/                     database copies and dumps — gitignored (see Operations)
@@ -312,9 +339,19 @@ Required environment variables: `BOT_TOKEN`, `SUPERADMIN_TG_IDS` (comma-separate
 super-admins), `AZURE_CLIENT_ID` / `AZURE_CLIENT_SECRET`, `OAUTH_REDIRECT_URL`
 (public HTTPS — Microsoft rejects `http://` and `localhost`), `FERNET_KEY`.
 
-Optional: `STEAM_API_KEY`, `ANTHROPIC_API_KEY`, `YOUTUBE_API_KEY`, `OAUTH_LISTEN_HOST` /
-`OAUTH_LISTEN_PORT`, `DB_PATH`, `MEDIA_DIR`, `LOG_LEVEL`, `MINI_APP_URL` (empty disables the Mini
-App entry points), the poller interval settings, and the mail server for email sign-in
+The database (#234): `DATABASE_URL` (a PostgreSQL DSN; the dev default is the
+project's own cluster, `postgresql://localhost:5433/unlocked?user=postgres`) and
+`DATABASE_SCHEMA` (this server's own schema: `prod`, `test`, `dev`; the catalog is
+the schema `games`, shared). `DB_PATH` no longer names the database: its folder is
+where the server keeps its files (the lock, the advisers' answers).
+
+Optional: `LEGACY_BOT_TOKENS` (the tokens of bots this one replaced, #238: the
+Mini App opened from their posts arrives signed by them and is still accepted,
+`Settings.mini_app_tokens`; never used to poll or send), `STEAM_API_KEY`,
+`ANTHROPIC_API_KEY`, `YOUTUBE_API_KEY`, `OAUTH_LISTEN_HOST` /
+`OAUTH_LISTEN_PORT`, `MEDIA_DIR`, `LOG_LEVEL`, `MINI_APP_URL` (empty disables the Mini
+App entry points), the poller intervals (a first-run seed: the polling steps are
+`app_settings` since #184 stage 0, see Polling model), and the mail server for email sign-in
 (`SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURITY` starttls/ssl/none, `SMTP_USERNAME`,
 `SMTP_PASSWORD`, `SMTP_FROM` — a bare address, it is also push's contact; #162;
 setting it up: `docs/mail-setup.md`).
@@ -349,72 +386,65 @@ setting it up: `docs/mail-setup.md`).
 
 ## Data model
 
-The canonical schema is `bot/db/schema.sql`; this section describes the model, not
-every column. History: #106.
+The canonical schema is `bot/db/pg/app.sql` (a server's own tables) and
+`bot/db/pg/games.sql` (the shared catalog), PostgreSQL since #234; this section
+describes the model, not every column. `bot/db/schema.sql` and `bot/db/migrations/`
+are the SQLite history (up to migration 143), kept for the import tool and its
+tests only: a migration number or a column named below may point there. History: #106.
 
 ### One games database for prod and the test server (#229)
 
-- **The catalog is one file both bots attach** (owner, 2026-10-28;
-  `db/repo/_games_db.py`, on the VPS `/srv/unlocked-games/games.db`): every
-  table about games, achievement lists and the stores (`CATALOG_TABLES` — the
-  lists and their achievements, Steam's caches, guides, the games catalog, the
-  HLTB mirror, store answers, `fetch_state`, the octopus's queue) lives in
-  `games`, attached to each bot's own database; people, accounts, what they
-  earned, chats and `app_settings` stay each server's. SQLite finds a table
-  nobody qualified in `main` first, then in `games`, so queries are as before;
-  only what *creates* a table, an index or a trigger of the catalog is placed
-  in `games` (`placed`), for schema.sql, the migrations and the indexes after
-  them. **A database names its games file in `app_settings`** (`games_db_path`),
-  written by `scripts/games_db.py split|join`; one that names none is one file,
-  as before (the dev server). A named file that is missing stops start-up — an
-  empty catalog is never made up. Scripts open a database through
-  `bot/db/files.py` (`connect`, `open_database`, `backup`), which attaches its
-  games file; a copy is made of both, the copy naming its own games copy.
+- **One PostgreSQL database, a schema a server and one for the catalog**
+  (owner, 2026-10-30; #234): `prod`, `test`, `dev` (`DATABASE_SCHEMA`) hold each
+  server's people, accounts, what they earned, chats and `app_settings`;
+  `games` holds every table about games, achievement lists and the stores
+  (`CATALOG_TABLES` — the lists and their achievements, Steam's caches, guides,
+  the games catalog, the HLTB mirror, store answers, `fetch_state`, the
+  octopus's queue), shared by prod and the test server. The connection's
+  search path is `<server>,games`: a table nobody qualified is found in the
+  server's schema first, then in the catalog — what attaching the games file
+  did on SQLite — so queries name no schema. The catalog's pictures are one
+  folder for both (`MEDIA_DIR`, below).
 - **A migration touching the catalog runs once per server against the one
-  file**: it must only add (a table, a column, an index) and be idempotent —
-  an `ADD COLUMN` already there is skipped (`_apply_one`), a backfill must not
-  care that it ran before. The test server runs ahead of prod on the same
-  file, so prod's older code must keep working on a catalog the newer one
-  migrated. **A global rework of the games database** — a migration that
-  rebuilds, renames or drops a catalog table — **cannot be shared: the two
-  databases are parted for its duration** (owner, 2026-10-28; `xbox-deploy
-  games leave`), and once both run the new code one `split`s again and the
-  other `join`s.
-- **The catalog's background work may run on both bots**: the octopus and the
+  schema**: it writes `games.<name>`, must only add (a table, a column, an
+  index) and be idempotent (`IF NOT EXISTS`, a backfill that does not care that
+  it ran before). The test server runs ahead of prod on the same catalog, so
+  prod's older code must keep working on a catalog the newer one migrated.
+  **A global rework of the catalog** — a migration that rebuilds, renames or
+  drops a catalog table — **cannot be shared**: the two servers part for its
+  duration (a copy of `games` for one of them), and join again once both run
+  the new code.
+- **One linker at a time across both bots** (`pg_try_advisory_lock`, `GameLinker`).
+  **The catalog's background work may run on both bots**: the octopus and the
   store collection run wherever `store_collection` is on. A queue entry is
   taken by a conditional update that only one bot can win and held
   (`octopus_take`, half an hour), so two bots never assemble one game.
-  **No `UPDATE … RETURNING` on the bot's connection**: an unfinished one is a
-  write in progress, and every other coroutine's commit fails meanwhile.
 
 ### Bring-up and migrations
 
-- **`schema.sql` runs on every start; migrations bring an *existing* database up to
-  it.** A brand-new database is **baselined** — its migrations are recorded as
-  applied without running — so a migration only has to work against the schema it
-  was written for. The test is "was the file empty before schema.sql ran", not
-  "does `schema_migrations` exist".
-- **A migration adding a column schema.sql already created is not an error**:
-  `_apply_one` leaves that `ADD COLUMN` out of the script before it runs, and logs
-  it (#167 — swallowing the error used to skip the rest of the migration). A
-  database skipping versions meets both halves of the bring-up at once. Indexes on
-  columns a migration added are `_database.py::INDEXES_AFTER_MIGRATIONS`, made after
-  the migrations on every start, since a new database is baselined.
-- **A failed bring-up stops the process.** `connect()` closes the connection before
-  re-raising; an open aiosqlite connection keeps a non-daemon thread alive and the
-  bot neither serves nor exits. The same holds for anything later in `run()`
-  before polling starts: `main()` ends a run that raised with `os._exit(1)`, so
-  systemd (`Restart=on-failure`) starts it again, and `bot.me()` at start-up is
-  retried for ~2 minutes because Telegram is sometimes briefly unreachable.
+- **A schema with no tables is made from its file; migrations bring an
+  existing one up** (`db/repo/_database.py`, #234): `games` from `pg/games.sql`
+  when it is empty, the server's schema from `pg/app.sql` when it is, and a
+  schema made so is **baselined** — the migrations of `pg/migrations/` are
+  recorded as applied without running, so a migration only has to work against
+  the schema it was written for. A migration is one transaction
+  (`BEGIN … COMMIT` around its file); a new column or index goes in the
+  migration *and* in the schema file, for databases made after it.
+- **Every foreign key is DEFERRABLE** (the `DO` block at the end of each schema
+  file): merging two people moves a Telegram id from one row to the other and
+  defers the checks with `SET CONSTRAINTS ALL DEFERRED` (`_merge.py`).
+- **A failed bring-up stops the process.** `connect()` closes the connection
+  before re-raising; the same holds for anything later in `run()` before polling
+  starts: `main()` ends a run that raised with `os._exit(1)`, so systemd
+  (`Restart=on-failure`) starts it again, and `bot.me()` at start-up is retried
+  for ~2 minutes because Telegram is sometimes briefly unreachable.
 - **A database ahead of the code refuses to start** (`SchemaTooNewError`, #56) —
-  that is how an older build learns a newer one already migrated its file.
-- **The games-db release (#147) is rehearsed by the plan in #201** — a copy of
-  production, the bring-up, agents per area. A change on that branch that adds a
-  migration, a table, a column or a script writing the database adds its check
-  to #201 in the same change.
+  that is how an older build learns a newer one already migrated it. The
+  version's D counts both migration folders (`bot/version.py`).
 - **Rehearse a migration on a copy of production before the release that carries
-  it** — copy with `sqlite3`'s `backup()`, run the real `Database.connect()`, count
-  rows on both sides. Production's particular history breaks migrations no test can.
+  it** — a copy of the schemas (`pg_dump` / restore into a scratch database), the
+  real `Database.connect()`, rows counted on both sides. Production's particular
+  history breaks migrations no test can.
 
 ### People and accounts (#52)
 
@@ -463,10 +493,14 @@ every column. History: #106.
   in without asking. Offers and `link_` tokens live in memory for ten minutes. The
   merge defers foreign keys to commit (`chat_seen` points at `users.tg_id`, which
   moves between the two rows).
-  **A super-admin stays an ordinary person named by `SUPERADMIN_TG_IDS`** (owner,
-  2026-10-02): no role field. So a super-admin must always keep a Telegram id —
-  nothing (removing Telegram, a merge) may leave them without one; both refuse
-  with `admin`.
+  **Roles** (owner, 2026-10-28/29; `users.role`, migration 140,
+  `services/roles.py`, #232): `superadmin`, `admin` (the app admin), or none
+  (an ordinary person); a chat's admin is not a person's role but the chat's
+  (`chat_admins`, see Admin).
+  The super-admins `SUPERADMIN_TG_IDS` names are always super-admins — written
+  into the column on every start and on `/me`, never changed from the app —
+  and must always keep a Telegram id: nothing (removing Telegram, a merge) may
+  leave them without one; both refuse with `admin`.
   `accounts (platform, external_id, display_name, secondary_name, gamerscore,
   psn_trophy_level, achievements_visible, avatar_*, …)` is a platform account on its
   own terms (`platform` is `xbox`/`steam`/`psn` — one Xbox account covers both
@@ -581,14 +615,18 @@ every column. History: #106.
 - **Favorite games** (`favorite_games (person_id, game_id, anchor_key)`, migration
   130; owner, 2026-10-25): a person's hearts on games. `anchor_key` is the
   game's anchor version as `store:product_id:console`, and a favorite is
-  found by it first — a catalog carried over (`scripts/catalog_transfer.py`)
+  found by it first — a catalog carried over or merged (`scripts/sqlite_to_pg.py`)
   may give a game another id and the old id to another game —, else by its
   id (a merged game leading on). A merge of two people moves them.
 - **Season pass claims** (`pass_claims (person_id, palette, month)`, migration
   131; owner, 2026-10-27): the themes a person claimed, each checked against
   the month's points by the server (User interface: the season pass). The
   pass's levels are `pass_items` and a prize's codes `pass_item_codes` (133;
-  a draft and waiting changes live on the row): a prize says which platform it is for, `platform`, free text
+  a draft and waiting changes live on the row): a game prize is a game of the catalog or, when the
+  catalog lacks it, one named by its title alone (owner, 2026-10-28; a key is
+  for other services); a prize wears a tier as a theme does (`tier`: common / rare /
+  legendary / mythic, common when none was set; owner, 2026-10-28) and says
+  which platform it is for, `platform`, free text
   (Xbox, PlayStation, Steam or anything typed; 135); a code is taken once `claimed_at` is set, `person_id` says by whom (a
   merge moves it; a deleted person's code stays taken). The levels each person reached this month
   are `pass_reached (person_id, item_id, month)` (134; a merge moves them).
@@ -604,6 +642,27 @@ every column. History: #106.
   `psn_poll_state`. Xbox history: `title_history`. Steam: `steam_schema_cache`,
   `steam_rarity_cache`. HLTB: the mirror (`hltb_entries`, #147). Steam guides and patches: `steam_apps`,
   `game_patches`, `title_guide_reads` (see Steam guides and patches).
+- **The games catalog is the one place a game lives** (owner, 2026-10-30):
+  wherever a game is shown — its name, its picture, a card, a list of games, a
+  tap that opens it — it is the catalog's game (`games`, through
+  `repo.game_of_list` from an achievement list), never an achievement list's
+  row or a snapshot of it. A list that is in no game yet is adopted as one
+  (`repo.adopt_list_as_game`). What stays per list is only what is the list's
+  by nature: progress and completion (a game played on several platforms is
+  one list each, never summed). **The Mini App takes it so everywhere**: the
+  feed, the month's games, what is trending, news, notifications, an
+  achievement's page, a list's page, what somebody is playing — each item
+  carries its game (`game_page.games_of_lists`: `game_id`, name, poster,
+  hero) and opens it by `game_id`; **the month's games are one card a game**
+  (`mini_chat.month_games`): the month's count summed, the progress of the
+  platform furthest along shown (the game's page switches between them). The bot's chats keep naming the list
+  as before (owner: the chat bot is apart). **A list in no game yet** becomes
+  a game on its first visit and is linked at once (`GameLinker.link_title`,
+  local, no network), so the same game on two platforms is one game; the
+  lists adopted before are walked by `poller/stand_in_links.py` (40 stand-in
+  versions a tick, a version looked at rests a week, then two, a month:
+  `fetch_state`). A game page opened by `game_id` is cached by the game *and*
+  whose progress it shows (`GamePage.refKey`).
 - **`achievement_list_connectors`** (formerly `titles`, migration 117; owner,
   2026-10-15) **is not a game**: it links a game's versions to one achievement
   list on one platform and keeps that list's own facts — the platform's name
@@ -694,7 +753,12 @@ every column. History: #106.
   - **Tips** (`tip_en`/`tip_ru`/`tip_source`/`tip_translation`): how to get it, from
     the Steam community's guides. The text sits in its own language's column; the
     other stays NULL until a translation fills it and says so (`tip_translation =
-    'llm'`, like `description_source`). None are translated yet (owner, 2026-09-30).
+    'llm'`, like `description_source`). **Every tip is translated into the other
+    language** (owner, 2026-10-30; `services/guide_translations.py`): a game's tips
+    together, a few a call beside their achievements' names and descriptions,
+    as soon as they are worked out (`SteamExtras.on_guides_saved`), and the ones
+    kept before by `poller/translations.py`; a changed tip loses its
+    translation (`replace_title_tips`) and gets a new one.
 - **What a message renders from**: `services/descriptions_view.py` swaps in the
   reader's language from the catalog per chat, falling back to the other language
   and then to `seen_achievements`' own snapshot. Rows are copied, never mutated —
@@ -1196,7 +1260,7 @@ stage 3; the Mini App's game page (stage 5) shows them — see User interface,
     (anything not an adviser's `decided_by`). Labels are written as the
     viewer writes them (`save_decision`, then the linker); an HLTB match
     agreed on becomes a `manual` link. Questions and answers are JSON in
-    `data/advice/` beside the database (`pair_state(pair_id, dir)` for the
+    `advice/` in `DB_PATH`'s folder (`pair_state(pair_id, dir)` for the
     viewer), never in the database. An HLTB entry refused is kept as a
     `rejected` link (never made again), a DLC's HLTB entry written by hand is a
     `manual` link in `dlc_hltb` (or `rejected`), so every answer can be written.
@@ -1261,18 +1325,9 @@ stage 3; the Mini App's game page (stage 5) shows them — see User interface,
   what would change; `--apply` backs the database up into `backups/` first,
   with the bot stopped. What only a request brings (a Steam DLC's or
   package's own answer, the Russian appdetails) stays as it was.
-- **The catalog is built where it is taught and carried to the servers**
-  (owner, 2026-10-25: production collects the very games the development
-  catalog holds): `scripts/catalog_transfer.py export` copies its tables —
-  versions, games, relations, editions, DLC, the HLTB side, series, labels
-  and their log, the weights, `fetch_state`, the octopus's queue; not the
-  raw answers — and `import` replaces a server's catalog with them in one
-  transaction, the bot stopped, a backup beside the database first. The
-  catalog points outside itself only by a list's (platform, title_id), so
-  nothing else moves; a list the file lacks keeps its own stand-in, linked
-  into a game after. `--tables match_weights` carries a new fit alone.
-  Prod and the test server share one catalog (#229, above), so it is no
-  longer carried between them.
+- **The catalog is one schema, never carried** (#229, #234): prod and the test
+  server read the same `games`. What travels between copies is labels and
+  weights, below.
 - **Labels and weights are files in git** (owner, 2026-10-27; `catalog/labels.jsonl`,
   `catalog/weights.json`, `scripts/catalog_files.py`): one training serves
   production, the test server and the dev server. A label names its versions by
@@ -1341,7 +1396,16 @@ hand an answer to `raw_answers.keep`; the bot's assembly points it at
 
 `tokens` stores encrypted Xbox refresh tokens only (access/XSTS tokens stay in
 memory); status is active / invalid / revoked. Shared credentials (PSN NPSSO, Steam
-key, Anthropic key, YouTube key) are encrypted in `app_settings`.
+key, Anthropic key, YouTube key) are encrypted in `app_settings`. **A player's own
+PSN token** (owner, 2026-10-29; #233; migration 142, `psn_tokens`,
+`services/psn/personal.py`) is kept by PSN account, encrypted, active or dead,
+and counts only while its person holds the account (`_psn_tokens._HELD`): an
+unlink deletes it, a takeover leaves it unread and the daily check forgets it,
+a merge moves it with the person. **A token pasted where a nickname is asked**
+(the bot's prompt, `/connect_psn`, the Mini App's field) is recognised by its
+form (`personal.looks_like_token`), deleted from the chat and linked as a
+token — never logged, sent to Sony's search or quoted back. A person has
+Sony check at most five tokens in ten minutes (`too_soon`).
 
 ## Platform integrations
 
@@ -1459,6 +1523,18 @@ for this; psnawp uses the private one the PlayStation App uses.
 - **The design rests on one verified bet**: one admin NPSSO can read the trophies of
   *any* account whose trophy privacy is "Everyone", so nobody else logs in. Do not
   weaken the design without re-verifying it.
+- **Two levels** (owner, 2026-10-29; #233): the shared admin NPSSO reads every
+  account without a token and everything about games (the catalog, the store,
+  trophy groups' names, the Russian client); **a player's own NPSSO**, opt-in, reads
+  its own account (`PsnAuth.client_for`: presence, the trophy scan, groups, the
+  avatar, a resync). An account without one is polled `shared_slowdown` times
+  less often (×3, the PSN group of «Опрос статуса») — the shared token is the
+  bottleneck; what is new and costly (play time, hero stats) is read only with an
+  own token. A refused own token is marked dead (`PsnAuth.refused`), its account
+  falls back to the shared one, its owner is told once (`psn_token_dead`, on until
+  switched off), and the shared token's health is never touched; every live own
+  token is checked once a day (05:10). psnawp's own logger is pinned to WARNING:
+  at DEBUG it logs request headers, bearer token included.
 - **Verify an NPSSO with a real call (`check_alive()`) before saving it** — psnawp's
   token exchange is lazy.
 - **Pacing is psnawp's own limiter, one request every 2 s per client**
@@ -1474,9 +1550,9 @@ for this; psnawp uses the private one the PlayStation App uses.
 - **Presence and trophies** (#90): presence is one `get_presence()` per account, on
   the shared politeness cadence. Going Online → Offline fires an exit poll
   (`psn_fetcher.poll_account`), since trophies often sync when a session ends. Trophy
-  titles are scanned every 120s while online, 30 min while offline and active, 24h
-  when dormant (settings `psn_poll_interval`, `psn_offline_poll_interval`,
-  `psn_dormant_poll_interval`); a title whose progress grew is fetched in full.
+  titles are scanned every 2 min while online, 30 min while offline and active, 24h
+  when dormant (the PSN group of «Опрос статуса», `services/poll_cadence.py`);
+  a title whose progress grew is fetched in full.
 - **The scan persists one game at a time, trophies before the progress cache**
   (#26) — the other order silently lost trophies when a scan failed partway. An
   unmapped error on one game is logged and skipped.
@@ -1519,12 +1595,23 @@ for this; psnawp uses the private one the PlayStation App uses.
 The scheduler ticks every minute; each poller decides whether a target is due.
 History: #108.
 
-- **Presence cadence** (Xbox, Steam) is state-based — fastest in a game, then online,
-  then offline, slowest for someone long absent — for politeness, not quota.
-- **Accounts idle more than 14 days are dormant** (`poller/cadence.py::is_dormant`,
-  `catchup_idle_threshold_days`, from `last_online_at` or `linked_at`): their
-  catch-up and PSN scans drop to once a day. Coming online (`touch_last_online`)
-  wakes them at once; a fresh link counts as active.
+- **Presence cadence** is state-based — fastest in a game, then online, then
+  offline, slower for someone offline a while (`idle_after`), slowest for a
+  dormant account — **global admin settings, per platform** (owner,
+  2026-10-29; #184 stage 0; `services/poll_cadence.py`): /admin → Настройки →
+  «Опрос статуса: Xbox / Steam / PlayStation», in both panels from the registry,
+  whole minutes (the tick is a minute), PSN's trophy-scan steps beside them. The
+  pollers read them on every tick, so a change needs no restart; the
+  environment's `presence_interval_*`, `achievement_poll_interval`,
+  `psn_*_poll_interval` only seed them once (`seed_once` at start-up). A dormant
+  account's presence is asked once an hour, its PSN trophies once a day. Steam is asked in one batch for everybody due, so
+  its steps are a minute everywhere. How long an account has been offline is its
+  own presence row's (`changed_at`).
+- **Accounts idle more than `dormant_after` days (7; owner, 2026-10-29) are dormant**
+  (`poller/cadence.py::is_dormant`, the platform's setting, from `last_online_at` or
+  `linked_at`): their catch-up drops to once a day and PSN scans to the dormant
+  step. Coming online (`touch_last_online`) wakes them at once; a fresh link counts
+  as active.
 - **Achievement polling and exit polls**: while in a game, poll that game on the
   achievement debounce. On leaving it or going offline, one exit poll catches the
   last unlocks — immediately on Xbox, after 180s on Steam, on Online → Offline for
@@ -1533,7 +1620,7 @@ History: #108.
   title or batch failed — log and continue. Private profiles, empty responses, 429s,
   timeouts, dead credentials and outages are expected states, not exceptions.
 - **Backfill** is mandatory on first connection and safe on reconnection: history goes
-  in with `is_backfill = 1`, idempotently (`INSERT OR IGNORE`), and never publishes.
+  in with `is_backfill = 1`, idempotently (`ON CONFLICT DO NOTHING`), and never publishes.
   Xbox modern uses the broad history endpoint, Xbox 360 a title-by-title pass, Steam
   owned games with playtime, PSN trophy titles directly. PSN backfill flips
   `backfill_done` last.
@@ -1554,8 +1641,8 @@ History: #108.
 
 History: #108.
 
-An achievement is published to a chat only if every check passes: the person is
-subscribed there; not admin-excluded; the account's posting switch is on (#20); the
+An achievement is published to a chat only if every check passes: the chat's
+publishing switch is on (#232); the person is subscribed there; not admin-excluded; the account's posting switch is on (#20); the
 person's `rarity_mode` isn't `hidden`; in
 `rare` mode a
 known rarity is at or below the rarity threshold (Xbox 360 included since #121;
@@ -1737,8 +1824,9 @@ elsewhere in this file still describe the bot.
   anything new look like the rest is `docs/design-system.md` (its rarity tiers —
   mythic green, legendary orange, rare purple — are the app's Fortnite note).
   **The app counts its own points, not G** (owner, 2026-10-27): an
-  achievement is worth 10, 20 (≤10 %), 30 (≤1 %) or 50 (an Xbox Mythic, a
-  PSN platinum) on every platform (`_sql.points`, `views.POINTS`); the
+  achievement is worth 10, 20 (≤10 %), 30 (≤1 %) or 100 (an Xbox Mythic, a
+  PSN platinum — owner, 2026-10-29: far harder to get) on every platform
+  (`_sql.points`, `views.POINTS`); the
   Ranking, Home's month card and the race count them. The bot's chat
   messages keep G. A game's page
   takes a muted tonal scheme from its own art (`app/artTheme.ts`; stores whose
@@ -1768,7 +1856,10 @@ elsewhere in this file still describe the bot.
   `subscriptions`, chat id 0). Chats only help to find people to follow. Search
   is of our own catalog (owner, 2026-10-25: never the internet;
   `/api/mini/game-search`, from two letters; a dotted or apostrophed name
-  reads as one word — «stalker» finds S.T.A.L.K.E.R.) and of people by nickname (from
+  reads as one word — «stalker» finds S.T.A.L.K.E.R.; owner, 2026-10-29: found
+  the way people type — «the» and accents aside, «2» for «II», words in any
+  order, words written together («spiderman»), one typo («witchr»), the
+  first letters («gta»); `game_page.rank_search`) and of people by nickname (from
   three). A person's card is `/api/mini/people/{id}`; whom somebody follows and
   who follows them, `/api/mini/people/{id}/following|followers`, only to a viewer
   `can_view_activity` lets in. No chat is needed to use the app.
@@ -1926,7 +2017,10 @@ elsewhere in this file still describe the bot.
     `Notifier.tell_about_game_news`) is told to everybody who earned something in
     that game in the last 60 days (`repo.game_news_readers`): in the list always,
     on a channel by its choice (all, patches, news). Only posts of the last two days, two at most a
-    read, and none from an app's first read (its history). **A tap opens the
+    read, and none from an app's first read (its history). **A new post is
+    translated before it is told about** (owner, 2026-10-30;
+    `SteamExtras.translate_posts`), so a Russian reader's notice names it in
+    Russian. **A tap opens the
     post itself** (owner, 2026-10-08): the notice keeps its `appid` and `gid`,
     the list hands them on as `news`, a push's link carries `n=appid:gid`, and
     `GET /api/mini/club/news/post?appid=&gid=[&title_id=]` gives the post (and
@@ -1943,7 +2037,11 @@ elsewhere in this file still describe the bot.
     refusing after five tries. **Only a known push service is stored as an
     endpoint** (`mini_notifications.PUSH_HOSTS`: FCM, Mozilla, Apple, Windows; https
     on 443): the server posts to it, and an arbitrary address would make it call
-    any host, an internal one included. Push needs `MINI_APP_URL` (where a tap opens) and a
+    any host, an internal one included. **Push goes only to the app's own
+    address** (owner, 2026-10-29; `push_subscriptions.origin`, migration 143): a
+    browser keeps one subscription per address, and every dev tunnel kept
+    getting the same notice; one of another address is forgotten at start-up.
+    Push needs `MINI_APP_URL` (where a tap opens) and a
     contact for the push services (`SMTP_FROM`, else the app's https address).
   - Routes: `GET /api/mini/notifications`, `POST …/read`; `GET /api/mini/push/key`,
     `POST|DELETE /api/mini/push/subscription`; the switches through
@@ -1991,7 +2089,11 @@ elsewhere in this file still describe the bot.
   `GET /api/mini/game?game_id=` or `?platform=&title_id=`, `web/mini_game.py`,
   `services/game_page.py`): a tap on a game anywhere opens it. One game whole,
   read from the catalog with no network (`docs/mini-app-spec.md` lists its
-  parts). DLC by the day they came out, editions the shortest name first, a
+  parts). DLC the newest first — three on the page, all of them on a page of
+  their own with a search (a game may have a thousand), each named without
+  the game's name it opens with, and each opening a page of its own (its
+  picture, kind and day, what its store says, its hours, its store pages;
+  owner, 2026-10-29) —, editions the shortest name first, a
   series its newest game first; a game of a series opens in place and back
   steps back through them. A list in no game yet becomes a game of its own on
   its first visit (`repo.adopt_list_as_game`); the linker places it later.
@@ -2007,17 +2109,37 @@ elsewhere in this file still describe the bot.
   the stores' picture hosts only. The first request downloads it, shrinks it
   like an icon (1280 px) and keeps it under `data/covers/art/` (named by the
   address's hash); the octopus keeps a game's art as it assembles it. Screenshots
-  and trailers stay the stores' links.
+  and trailers stay the stores' links. **Steam's library art of now comes
+  first** (owner, 2026-10-30; `steam_store.library_art`,
+  `IStoreBrowseService/GetItems`, a hundred apps a request, no key): a live
+  game changes its poster and head every season, and the fixed
+  `library_600x900.jpg` keeps the launch art, a store's box art may carry
+  print marks. It is kept on the Steam version (`media` `poster` / `hero`) by
+  the store collection, and again when the game's page is opened
+  (`services/steam_library_art.py`, in the background, every 6 hours a game,
+  under the store switch); a re-parse of the kept `appdetails` keeps it.
+  The poster: Steam's of now, Xbox's, Steam's fixed capsule, PlayStation's;
+  the head: Steam's of now, then as before. `scripts/steam_library_art.py`
+  fills every Steam version once.
   **Its description follows the achievements' rule** (owner, 2026-10-28;
   #230, migration 138, `services/game_descriptions.py`): a store's Russian is
   kept only when it is Russian (Cyrillic, not its English handed back;
   `_stores.native_ru`) and marked `native`; with none, the English a Russian
-  reader is shown — a version's or HLTB's summary — is translated by Haiku in
-  the background the first time the page is opened in Russian, and kept with a
-  hash of that English (`versions.description_source = 'llm'`,
+  reader is shown — a version's or HLTB's summary — is translated by Haiku
+  and kept with a hash of that English (`versions.description_source = 'llm'`,
   `description_ru_of`; `hltb_entries.summary_ru_of`). A changed English text is
   translated again; a store's own Russian replaces ours; no key leaves it
-  English.
+  English. **A game is translated whole, by one job with three doors** (owner, 2026-10-31;
+  `services/game_descriptions.py`): its description, every achievement of its lists
+  (a Russian side the catalog holds is only marked), its tips, its newest posts. The
+  doors: a page opened in the Mini App (`pending`: the text shows blurred, `.translating`,
+  and the page asks again; no page waits), the octopus and store collection (`later`),
+  and the queue (`poller/translations.py`: `translation_batch_games`, 20, every
+  `translation_interval_minutes`, 5; those played here first), **off by default, a
+  super-admin's switch** (`translation_queue`, an action beside them in /admin →
+  Таймеры). The
+  bot's posts wait for their translation instead. What failed rests an hour.
+  `scripts/translate_batch.py` runs a share of the queue and prints its tokens.
   **The achievements** of a list (`/api/mini/games/{platform}/{title_id}`) are
   the list and its guides only (owner, 2026-10-26).
   **An Xbox list is split in two** where some of it came later (owner,
@@ -2055,7 +2177,15 @@ elsewhere in this file still describe the bot.
   month's levels), so a pass is built ahead and shown on its 1st. A month's
   pass may have a name, its theme («Хэллоуин»; `pass_seasons`, migration 137,
   `PUT /api/mini/pass/season`), shown on its card and waiting for the
-  month's publish like a level. Earlier months
+  month's publish like a level — and a cover (migration 139,
+  `PUT|DELETE /api/mini/pass/season/image`, saved again by
+  `pass_pictures`, placed and zoomed in a 16:9 `Cropper` first): the pass's head is an achievement's (`Hero full`:
+  the cover edge to edge with the months' arrows on it, a flower on its corner
+  with the days left, then «Сезон · Октябрь» and the season's name),
+  and the page takes its colours from it (`useArtTheme`), no colour picked by
+  hand.
+  The super-admin's arrow › goes on into the months ahead that have a pass
+  being built, each shown as anybody will see it on its 1st (a preview). Earlier months
   are looked back on (`GET /api/mini/pass?month=`, the arrows by the month's
   name): their points, what was claimed, one's own codes — nothing is taken
   from them. A theme once claimed is kept for good, whatever month. A prize's
@@ -2083,7 +2213,21 @@ elsewhere in this file still describe the bot.
   code is taken by one statement, so two taps never get the same one, and a
   prize taken down stays for whoever took a code. It is **a game of ours**
   (picked from the catalog: its name, cover and page) or **a code** for
-  anything else, with a picture of its own if sent (`PUT …/items/{id}/image`,
+  anything else — **a game the catalog lacks is added by hand** (owner,
+  2026-10-30; the picker searches **our catalog**, and its field's «Добавить
+  игру» opens the add-game page over the editor, which searches **Steam's and
+  Xbox's** and hands the game it adds back to the prize — `GET /api/mini/pass/game-search`, `services/manual_games.py`, one row
+  a game with its id in each store — **leaving out every game the catalog already
+  has**, by a store id or by a name the matcher reads alike
+  (`manual_games.existing_game`, `Repo.game_name_index`): a hand-added game must
+  never be a duplicate, and `POST /api/mini/pass/games` returns the existing game
+  even when asked to add it. A pick the catalog lacks → `Repo.add_manual_game`:
+  one stand-in version of no store so a rebuild keeps it, the store pages' keys
+  queued for the octopus; the linker joins it to the real game when the stores
+  bring one and the old id resolves to that
+  (the same search is the super-admin's «+» in Home's «Игры месяца» head,
+  `screens/home/AddGame.tsx`: pick a game the catalog lacks, it is added and its
+  page opens) —, with a picture of its own if sent (`PUT …/items/{id}/image`,
   saved again as a JPEG by `services/pass_pictures.py` under
   `data/covers/pass/`, served to anybody). Themes and prizes are **one
   vertical timeline, by points**: a rail with a node and the points of each,
@@ -2093,13 +2237,30 @@ elsewhere in this file still describe the bot.
   dialog tells everybody of the new levels (`pass_reward`, the one notice kind
   **on until switched off** — `notifier.DEFAULT_ON`, a channel's
   `pass_reward:off`; Settings → Уведомления, «Призы сезонного пропуска»); a tap
-  opens the pass (`t=pass`). **A level reached is told** (owner, 2026-10-28;
+  opens the pass (`t=pass`). **The season's start is told** (2026-10-31; `poller/season_start.py`, `season_start`,
+  `pass_seen`, `season_notified`, migration 148): at 12:00 on the 1st in the person's own
+  time zone, every ten minutes looked for, once a season, only to whoever has not opened
+  the pass's own page since it began (`POST /api/mini/pass/seen`; Home and Settings read the pass too), and only
+  when the month's pass has a live level; on until switched off (`season_start:off`;
+  Settings → Уведомления, «Старт сезона»); a tap opens the pass.
+  **A level reached is told** (owner, 2026-10-28;
   `pass_level`, `Notifier.tell_about_pass_levels`, migration 134
   `pass_reached`): after every publish the month's points are checked, and
   the levels newly reached are marked (each once a month) and told as one
   notice, of the highest — on until switched off, a channel choosing every
   level, prizes only (`pass_level:prizes`: a game or a code, not a theme) or
   none (Settings → Уведомления, «Уровни сезонного пропуска»).
+  **TEMPORARY, to be deleted** (owner, 2026-10-30): once, as the second season
+  (2026-11) begins, the first one's passes are wiped — every level and code,
+  the themes claimed, the levels reached, the seasons' names, all of a month
+  before 2026-11 (`services/season_reset.py`, `poller/season_reset.py`,
+  `Repo.wipe_pass_before`, marker `season2_reset_done`); a pass built ahead
+  for November stays. Remove the three and their wiring afterwards.
+- **A skeleton shows a few items, each one plain block** (owner, 2026-10-30):
+  a list, a rail, a row of days or faces stands in as two to four blocks of
+  its items' own size and shape — no tiny lines or chips inside them; what is
+  not a list (a title, a count) keeps its own shape. Every screen's skeleton
+  follows it.
 - **The month's games are listed newest first** wherever the Mini App shows
   them — Home, a profile, the Ranking, Search (owner, 2026-10-27;
   `users_games_achievements(order="recent")`); the bot's lists keep the count.
@@ -2161,9 +2322,20 @@ keyboard.
   picker edit the message they were opened from and end in buttons — "‹ Назад" /
   "‹ В панель" back, "⚙️ Панель" or the next step on. Only what arrives later (a
   backfill's live status, `handlers/backfill.py`) is a message of its own.
-- **Timezones**: the eight offsets this community lives in, "Другой ▸" for the full
-  −12…+14 grid, "✏️ Ввести вручную" for one typed offset (`+3`, `+5:30`). Offsets,
-  never zone names.
+- **Time zones are places** (owner, 2026-10-30; `services/time_zones.py`,
+  migrations 145, 147 on PostgreSQL): a person's and a chat's zone is an IANA name
+  (`user_settings.tz_name`, `chat_settings.tz_name`), so a summer clock change
+  follows by itself — Vilnius is UTC+2 in winter, UTC+3 in summer. Every time
+  calculation goes through `time_zones` (`local_now`, `midnight_utc`), which
+  takes a name or, where none is set, the old offset (`tz_offset_min`, a fixed
+  zone; the models' `.tz` gives whichever). 145 turned every offset into a zone
+  keeping the same clock: Russia's by city (no clock changes there), the rest
+  the fixed `Etc/GMT±N`. The Mini App's picker (Settings → Общие) is a search
+  over `time_zones.ZONES`, the phone's own zone offered first
+  (`GET /api/mini/time-zones`); a chat's is the admin registry's `tz_name`. The
+  bot's DM picker still sets an offset (eight common ones, "Другой ▸" for the
+  −12…+14 grid, "✏️ Ввести вручную" for one typed, `+3`, `+5:30`), which
+  clears the zone by place.
 - **The stale-login reminder is the only DM the bot starts itself** (besides connect
   progress), and it says reconnecting will not replay history into chats.
 - **`/panel`** is one self-editing message. Header: the person's identity and one line
@@ -2179,7 +2351,16 @@ keyboard.
   every chat (#126), language (#48, DMs only), then one row per platform in the
   display order — `[🟢 XBOX ▸, 🔔 posting switch]` (#10), or one wide "🎮 Подключить X"
   (#33). The platform button opens that platform's screen: profile, the switch,
-  unlink, and for PSN every account (up to three) plus adding one. The panel's switch
+  unlink, and for PSN every account (up to three) plus adding one — by nickname
+  or by the account's own token (#233) —, each with «🔑 Токен ✅/➕/⚠️»: that
+  token's screen (what it gives, the safety note, how to get one, paste,
+  replace, remove; agreed on a navigable mockup, 2026-10-29). A pasted token's
+  message is deleted at once and the result replaces the prompt. The Mini App has the
+  same (#233): Settings → Аккаунты → PlayStation → «Личный токен» opens its page
+  (`screens/settings/PsnToken.tsx`; `PUT|DELETE /api/mini/psn/token`), «Или по
+  токену» on the PSN connect page links one (`POST /api/mini/connect/psn-token`,
+  `web/mini_psn_token.py`); `/me` says each account's `token` state, never the
+  token; the admin's «Ключи» list the players' tokens beside the keys. The panel's switch
   covers the whole platform ("Частично" when only some PSN accounts post); a Steam or
   PSN button carries ❗ while its achievements are hidden (any one PSN account), and
   that platform's screen then says what it means and puts "🔓 Как открыть ачивки"
@@ -2214,28 +2395,62 @@ keyboard.
   **except an achievement notification**, single or digest, which it never takes
   (#101; `bot_messages.is_achievement`, set under the publisher's
   `achievement_category()`). The admin panel's and the Mini App's "delete last" share
-  the query. It quotes the first lines of what it deleted, and that confirmation is a
+  the query. The chat's admin and the app's admins may use it (#232). It quotes the first lines of what it deleted, and that confirmation is a
   system message the cleanup job removes later.
 
 ### Admin
 
-- **Two roles, named distinctly** (owner, 2026-10-07): the **суперадмин**
-  (super-admin) is the global operator — `SUPERADMIN_TG_IDS`, any number of them,
-  `Settings.is_superadmin`; the old name `ADMIN_TG_IDS` is still read. **«Админ»
-  is reserved for a narrower role to come** (the per-chat one #15 proposes), so
-  code, text and docs never call the super-admin an admin. `/admin`, the
-  `/api/mini/admin` routes and `handlers/admin.py` name the panel, not the role.
+- **Four roles, one table** (owner, 2026-10-28/29; #232; `services/roles.py`):
+
+  | | user | chat admin | app admin | super-admin |
+  |---|---|---|---|---|
+  | own things, feed, games, pass, invites, group commands, `/promo` | ✅ | ✅ | ✅ | ✅ |
+  | a chat's settings, «Сообщения» (`/delete_last`, wipes), promo | — | own chat | all | all |
+  | hand the chat admin role on (losing it) | — | ✅ | — | — |
+  | appoint / remove a chat admin | — | — | ✅ | ✅ |
+  | people: cards, exclude, avatar, refresh an account | — | — | ✅ | ✅ |
+  | season pass editor, global settings | — | — | ✅ | ✅ |
+  | keys, delete a person, reset an account, roles | — | — | — | ✅ |
+
+  - **суперадмин** — one of `SUPERADMIN_TG_IDS` (the old name `ADMIN_TG_IDS`
+    is still read) or one a super-admin made (`users.role`); only they give
+    roles — one step up or down, confirmed, from a person's card in both
+    panels (actions `make_admin`, `make_superadmin`, `unmake_admin`,
+    `unmake_superadmin`; the lists mark ⭐ an admin, 👑 a super-admin), and
+    «⋯» on a person's page in the Mini App (the role from `GET
+    /api/mini/admin/users/p<id>/role`, the step by the same actions) — never
+    to themselves nor to one the environment names; one the environment
+    stops naming loses the role at the next start (`ensure_superadmins`) —
+    and they open any person's page whatever its privacy
+    (`repo.can_view_activity`).
+  - **админ приложения** (app admin, `users.role = 'admin'`).
+  - **админ чата** (chat admin): **one per chat, by Telegram id**
+    (`chat_admins`, migration 141) — they may never have used the app.
+    Whoever adds the bot to a group becomes it; removing the bot (or a 403)
+    clears it (`repo.deactivate_chat`), and adding it again appoints the
+    adder again, so a group fixes a stuck bot by itself. Existing chats took
+    `chats.added_by`. They hand it on to a known member of the chat
+    (subscribed or seen writing, `repo.chat_admin_candidates`) and lose it;
+    an app admin appoints or removes; the new one is told in a DM when the
+    bot may write to them. They reach their chat by `/admin` (their chats
+    only) or the group hub's «🛠 Управление чатом» (`?start=chatadm<id>`).
+
+  **Every action and screen says what it needs** (`roles.Need`: `chat`,
+  `admin`, `superadmin`; an action's `needs`, a setting's by its scope) and
+  `Access.allows` is the one answer: a button nobody may press is never
+  drawn and a request for it is refused, in both panels. `/me` says `role`,
+  `is_superadmin` (the app admin door, an admin's too) and `chat_admin`.
 - **One source for both admin panels** (#176; owner, 2026-10-08: a new admin
   setting appears in the bot and the Mini App at once). Both only render what
   these services answer:
   - `services/admin_registry.py` — **every setting**, global and per chat, one
     row each: where it lives, its kind (number, decimal, on/off, one of a list,
-    an hour, a UTC offset), bounds or choices, group, label, hint. `set_value` is
+    an hour, a time zone), bounds or choices, group, label, hint. `set_value` is
     the one way either panel changes one — parsed, bounded, stored; a bad value
-    is refused the same from a typed message and from JSON. Time zones are the
-    38 real UTC offsets (`REAL_UTC_OFFSETS_MIN`), summaries go out on the hour;
-    the Mini App names a city beside an offset where one is known («Москва ·
-    UTC+3», `value_label(place=True)`), the bot shows the offset alone.
+    is refused the same from a typed message and from JSON. A time zone is a
+    place, listed as Windows lists them («(UTC+02:00) Вильнюс, Киев, Рига…»,
+    `time_zones.ZONES`, one row a clock; any valid IANA name taken),
+    shown with its offset now in both panels; summaries go out on the hour.
   - `services/admin_status.py` — the home (`AdminStatus`: counts, API usage,
     sign-in emails against their caps, every credential's state). **The API
     load** (owner, 2026-10-12; `services/api_usage.py`, noted as each request
@@ -2288,20 +2503,28 @@ keyboard.
   `admin_registry.py`, its drawing in `views/admin_settings.py` and in
   the Mini App's admin — and from then on every setting of
   that kind appears in both panels by itself.
-- **`/admin`** (private, self-refreshing): credential health; "🔑 Ключи платформ" to
-  set / change / clear the Steam key, PSN NPSSO, Anthropic and YouTube keys and the
-  mail login (#17) — a key is
+- **`/admin`** (private, self-refreshing): credential health; "🔑 Ключи платформ" —
+  one button per credential with its state as an icon (✅ / ⚠️ / ⚪️; #233, agreed
+  on a mockup 2026-10-29), each opening its own screen: state, last check, load,
+  where to get it, set / change / clear the Steam key, PSN NPSSO, Anthropic and
+  YouTube keys and the mail login (#17); beside them «👥 Личные токены PSN»,
+  whose own token reads which account and whether it works, and the user card's
+  PSN block says which token reads each account — a key or token is
   **never shown back**, and entering one is a single-message state with only a way
   out; API usage; «⚙️ Настройки» — the registry's global groups (Правила: the
   rarity threshold, the digest size, profile links, the post picture, its card, scale and small-icon limit · Новые пользователи: the
   mode they start with · Списки · HLTB · Таймеры · Почта · Прочее), `0` worded
   by what it means; the user list; the chat list and
   per-chat cards; exclusion; bot-message cleanup.
-- **The per-chat card** opens the registry's chat groups — Основное (on, language,
-  time zone) · Итоги дня (on, the hour) · Антифлуд (limit, window) — and «Сообщения» (the wipes), each redrawing in place
+- **The per-chat card** opens the registry's chat groups — Основное (publishing,
+  language, time zone) · Итоги дня (on, the hour) · Антифлуд (limit, window) — and «Сообщения» (the wipes), each redrawing in place
   with the card's text above. There is no minimum gamerscore
   (owner, 2026-10-08: it held back every Steam and PSN achievement; the column
-  `chat_settings.min_gamerscore` is left unread).
+  `chat_settings.min_gamerscore` is left unread). **Publishing** (owner,
+  2026-10-29; `chat_settings.publishing`, migration 141) is the chat admin's
+  switch for posts there; `chats.is_active` is the bot's own (removed, added
+  back) and no setting — a manual "off" was undone by the next `/subscribe`.
+  The card names the chat admin, and «👤 Админ чата» appoints or hands it on.
 - **The per-user card**: the person (chain 1) and their id, then **every way they
   sign in** (owner, 2026-10-07; `services/logins.py`, the same list the Mini App's
   admin card shows): Telegram (`@username`, its id passed to Fluent as a string,
@@ -2472,8 +2695,7 @@ Pickers of fixed options (timezones, digest thresholds, hours) are not lists.
   through `_sql.py`'s `rarity()` / `rarity_cache_join()`, with
   `seen_achievements.rarity_percent` as the fallback — rarity is a fact about the
   achievement, and the row is a never-updated snapshot. Xbox rarity comes only with
-  contract 4, so the contract-2 history is filled by `poller/rarity_backfill.py` (and
-  `scripts/backfill_rarity.py`, bot stopped) — one request per title covers every
+  contract 4, so the contract-2 history is filled by `poller/rarity_backfill.py` — one request per title covers every
   owner. Every platform's poll also writes it. Nothing expires: a year-old
   percentage is worth more than none. Xbox 360's rarity comes from contract 3
   (#121; live polls and `poller/rarity_backfill.py`), so 💎 and `rare` mode
@@ -2707,11 +2929,31 @@ sent to a chat.
   (update, patch, hotfix, a version number; not a demo or playtest), anything else
   is news. A post keeps its time, not only its day (migration 085: `published_at` is `…T14:32:00Z`, shown in the reader's own time). The game page shows the newest, all of them a tap away; the feed (owner,
   2026-10-26; `repo.favorite_games_news`, `GET /api/mini/club/news?scope=following&favorites=1&month=`)
-  mixes in both, untranslated, for the viewer's favorite games, newest first, one
+  mixes in both for the viewer's favorite games, newest first, one
   card per post however many of our games are that Steam app. Without
   `favorites` the route still answers the games the viewer's circle earned
   something in within 60 days (`repo.games_news`). A post opens whole, its game
-  a tap away.
+  a tap away. **A post is put into Russian as soon as it is read** (owner,
+  2026-10-30; `services/news_translations.py`, `translate.client.translate_news`):
+  as soon as `SteamExtras.refresh_patches` saves an app's posts, and the posts
+  kept before by `poller/translations.py`, the newest first, in its batches, as the
+  model answers (up to 50 s a tick); the
+  links, pictures and the game's own names (maps, weapons, modes, items) kept
+  as they are. **A long post goes in parts** of about `NEWS_PART_CHARS`, cut
+  between paragraphs (else at a line's end, never inside one), each its own
+  call, put back together with an empty line. A changed post loses its
+  Russian and is translated again (`save_game_patches`). Every screen
+  showing a post gives a Russian reader its Russian (`mini_chat.news_title`
+  / `news_text`).
+- **A post can be shared** (owner, 2026-10-30; the page's «Поделиться»): the
+  link alone, no text — `/api/mini/share/news/{appid}/{gid}` (`web/mini_share.py`,
+  public: a messenger's crawler carries no sign-in) answers a tiny page with
+  the post's Open Graph tags (the game and the title, the start of the text,
+  the post's picture or its game's art) that sends a person on to the post in
+  the app. Inside Telegram the share opens its chat picker, elsewhere the
+  system's share sheet, else the link is copied. It sits under `/api/mini/`,
+  which nginx already proxies on each host. Outside Telegram the app asks to
+  sign in first.
 - **An achievement has a page of its own** (owner, 2026-10-05): opened from its
   row in a list (a secret one revealed first), a post in the Feed, Home's
   gallery and the Ranking's lists (owner, 2026-10-09;
@@ -2786,13 +3028,13 @@ and a look at how it words its titles).
 **`A.B.C.D`** (#56) from `bot/version.py`, shown at the end of `/help` and the hub
 and logged at startup (`… is up (v1.4.3.058)`). History: #112.
 
-- **A** — the architecture; by hand, on a rewrite. `2` since 2.0 (the games
-  catalog and the new Mini App; owner, 2026-10-27), which started B again at 0.
-- **B** — the minor line: `TRUNK_LINE` on `main`, **one above it on every working
+- **A** — `0` until the app's 1.0, which is far off (owner, 2026-10-31: the old
+  major became the minor, so 2.2.1 reads 0.2.1, and the PostgreSQL release is 0.3.0).
+- **B** — the minor, a big update: `TRUNK_LINE` on `main`, **one above it on every working
   branch**, so the test server reads the line its work will ship in and "which bot is
   this" is answerable from the version. Only a release that starts a new minor bumps
-  `TRUNK_LINE` and tags `vX.Y.0` on `main`; one that does not (1.4.3) leaves both.
-- **C** — commits counted from git at startup, never stored in a file: on a working
+  `TRUNK_LINE` and tags `v0.Y.0` on `main`; one that does not leaves both.
+- **C** — a hotfix or a small update on that minor: commits counted from git at startup, never stored in a file: on a working
   branch since the **merge base** with `main` (so others' merges do not renumber it);
   on `main` since the **newest release tag**, **first parents only** — one per release.
   **Commits that touch only documentation do not count** (`DOCS_PATHS`: any `*.md`
@@ -2823,6 +3065,44 @@ History: #112.
 
 History: #112.
 
+### The move to PostgreSQL (#234)
+
+Agreed with the owner on 2026-10-30, **the fast path**: no dual backend and no
+week-long soak — the code moves in one step on `feature/postgres`, is checked on a
+copy of production and on the dev server, then both servers switch; production
+runs on SQLite until the switch, its downtime the data import alone. PostgreSQL 16
+runs on the VPS (localhost). Until the switch, the servers and the deploy script
+run as they do; what is left is in #234. The new bot (#238) and `unlocked.how` (#237)
+switch after it.
+
+**Scripts open PostgreSQL through `bot/db/tools.py`** (the bot's dialect and rows,
+no bring-up): `--schema` in place of `--db`, default `DATABASE_SCHEMA`; an async
+script starts with `tools.run`, since Windows' default event loop refuses psycopg.
+A script's backup is a `pg_dump` file in `backups/`, so `pg_dump` must be on PATH
+(`pg_restore` and `CREATEDB` for `reparse_store_payloads`' dry run). The catalog is
+shared, so a script writing it writes the live one whichever schema it names.
+**`scripts/sqlite_to_pg.py`** moves a server: `bring-up --out DIR` (copies, with
+the SQLite migrations this code ships applied; the source is what a rollback goes
+back to), `preflight`, `import --schema`, `verify` (exit 1 on a mismatch, 2 on a
+refusal). A source behind the migrations is refused: one may fill a table no schema
+file brings. A second server on the same catalog file skips the catalog; one that
+differs needs `--merge-catalog`.
+**A server moves in this order: stop the bot, bring up, import, verify, install
+`scripts/xbox-deploy.sh` by hand, push.** The first deploy would otherwise run the
+old script against the new code. The code comes last because **a bot refuses an
+empty schema** (`EmptySchemaError`; `DATABASE_NEW_OK=true` for a new database), so
+the push before the import leaves it down, never starting over with nobody in it.
+While the bots are on different code, `xbox-deploy` installs a checkout's copy of
+itself only forward (`DEPLOY_SCRIPT_EDITION`), and a bot whose schema has no tables
+is backed up from SQLite.
+**A rollback within 48 hours of the switch** (owner, 2026-10-31) is the previous tag on
+SQLite and the untouched `bot.db`; what happened since the switch is lost, nothing carries
+it back.
+**On the day:** the test bot is stopped too while a server's import and linking run (one
+catalog), and `--games` names the copy at every step, or they read the live file.
+**The connection is one for the process's life**: when the server is gone the bot
+exits (`postgres.on_connection_lost`) and systemd starts it again.
+
 ### Three branches, three servers
 
 "Test" names only a server, never a branch (owner, 2026-09-24).
@@ -2847,23 +3127,45 @@ History: #112.
 
 ### The dev server
 
-`manage.ps1` (the bot cannot start itself): `start` / `stop` / `restart` / `status` /
+`manage.ps1` (the bot cannot start itself; it also starts the local PostgreSQL cluster
+on port 5433, `stop` stops it once no bot is left on it, `restart` leaves it): `start` / `stop` / `restart` / `status` /
 `logs [-Lines N]` / `dashboard` (live view with hotkeys; `manage.bat` opens it), with
 `-Test` for the `.env.test` instance on 8081 and `-Web` to tunnel the Mini App.
 `status` shows uptime, the port, stray bot processes (two bots on one `BOT_TOKEN`
 fight over updates) and a database summary. The restart hooks live in `.git/hooks`,
 so a fresh clone does not have them. Never run the dev server on prod's `BOT_TOKEN`.
 
+**The dev server's PostgreSQL is a cluster of the project's own** (#234): port
+5433, data in `%LOCALAPPDATA%\unlocked-pg`, trust authentication on localhost,
+made with the binaries of the PostgreSQL 17 installed on the machine (its own
+service on 5432 is the owner's and is left alone). It does not start with
+Windows yet: `pg_ctl -D %LOCALAPPDATA%\unlocked-pg -o "-p 5433" start`.
+
 ### The VPS
 
-A VPS at Spaceship (Namecheap), Ubuntu 24.04, nginx + systemd, dedicated user
-`botsvc`; nginx terminates TLS (Let's Encrypt, certbot timer) and proxies to the bots,
-whose ports are never exposed (`OAUTH_LISTEN_HOST=127.0.0.1`).
-**SSH is keys only, on port 22022** (owner, 2026-10-23: password login
-is off, root by key only). CI's deploy connects on 22022 too, with
-`HostKeyAlias` so the pinned `DEPLOY_KNOWN_HOSTS` entry still matches.
-Port 22 is closed: `ssh.socket` listens on 22022 alone (its `override.conf`,
-#228); ufw is off, nothing else is exposed.
+A VPS at Contabo (owner, 2026-10-30; Cloud VPS 6: 6 cores, 12 GB, 200 GB,
+EU, `80.241.212.183`), Ubuntu 24.04, nginx + systemd, dedicated user `botsvc`;
+nginx terminates TLS and proxies to the bots, whose ports are never exposed
+(`OAUTH_LISTEN_HOST=127.0.0.1`). **Everything it was set up with is in the
+repository** — `deploy/` (the nginx sites, the units, prod's shared-folder
+drop-in, the SSH socket) and `scripts/provision.sh`, which makes a fresh
+Ubuntu 24.04 into this server and never starts a bot; a change made by hand on
+the server is made in `deploy/` too. PostgreSQL 16 runs there, localhost
+only, for #234.
+**SSH is keys only, on port 22022**, as `ubuntu` with `sudo` (Contabo's
+admin user); root cannot log in. CI's `deploy` user may run only
+`xbox-deploy`; it connects on 22022 too, with `HostKeyAlias` so the pinned
+`DEPLOY_KNOWN_HOSTS` entry still matches. Port 22 is closed: `ssh.socket`
+listens on 22022 alone; ufw is off, nothing else is exposed.
+**Two certificates**: Let's Encrypt for `xbox.sultanpharm.com` and
+`test.xbox.sultanpharm.com` (certbot timer), and Cloudflare's origin
+certificate for `unlocked.how` and `test.unlocked.how` (#237: behind
+Cloudflare's proxy, Full (strict), until 2041; its key was made on the server
+and never left it — only the CSR went to Cloudflare), whose sites take the
+visitor's address from `CF-Connecting-IP`, trusted only from Cloudflare's
+ranges (`deploy/nginx/cloudflare-realip.conf`). The old Spaceship server
+(`209.74.85.21`) keeps its bots masked and proxies to this one until it is
+deleted.
 
 ```bash
 systemctl {start|stop|restart|status} xbox-bot        # xbox-bot-test for the test server
@@ -2894,9 +3196,11 @@ journalctl -u xbox-bot -f
 the checkout on every deploy) is the only thing the CI `deploy` user may run as root.
 It:
 
-1. backs up the database **every** time (`data/backups/`) and keeps only the
-   newest of its own copies — **8 on prod, 5 on the test server** (owner,
-   2026-10-23: kept forever they filled the disk); a copy named by hand stays;
+1. backs up **every** time (`data/backups/`, `pg_dump` of the bot's schema and
+   `games`) and keeps only the newest of its own copies — **8 on prod, 5 on the
+   test server** (owner, 2026-10-23: kept forever they filled the disk); a copy
+   named by hand stays. `xbox-deploy backup` does the same for both bots daily
+   (`deploy/systemd/unlocked-backup.timer`);
 2. `git fetch --prune` and `git merge --ff-only` — never a robot's merge commit;
 3. reinstalls dependencies only when `pyproject.toml` changed;
 4. unpacks the Mini App CI built (built there, not on the 300 MB box);
@@ -2912,20 +3216,16 @@ is started again on any failure.** The script reinstalls itself from the checkou
 but the run that installs it finishes as the old one: a change to it takes effect
 from the next deploy.
 
-**`xbox-deploy games split|join|leave [--dry-run]`** moves the bots onto the
-shared games database (#229), run by hand on the VPS, each bot it touches
-stopped and verified after (`scripts/games_db.py`, which copies the database
-into `backups/` first): `split` makes the test server's catalog the shared file,
-`join` has prod take it — what only prod knew of its lists is added, a list the
-shared file has no version for keeps its stand-in, linked into a game after —,
-`leave` copies the shared catalog back into both and parts them. The dry run
-does it on copies in a temporary folder. A deploy's backup copies the games file
-too (`<copy>.games.db`, pruned with its copy).
+**PostgreSQL on the VPS** (#234) is `scripts/provision-postgres.sh` and
+`deploy/postgresql/`: database `unlocked`, listening on localhost only; roles
+`unlocked_prod` and `unlocked_test`, each with its own schema and its password only
+in that bot's env file; `games` owned by `unlocked_games`, a role both are members
+of, and whatever is made there is handed to it by an event trigger, so either bot
+can migrate what the other made.
 **Prod's unit is `ProtectSystem=strict`**: it may write only the folders it
-names, so the shared ones are a drop-in,
-`/etc/systemd/system/xbox-bot.service.d/shared.conf` (`ReadWritePaths=
-/srv/unlocked-games /srv/unlocked-media`); a new shared folder is added there, or
-prod fails with "attempt to write a readonly database".
+names, so the shared media folder is a drop-in,
+`/etc/systemd/system/xbox-bot.service.d/shared.conf`; a new shared folder is added
+there, or prod fails with a read-only error.
 
 GitHub holds four secrets (SSH key, host, user, host fingerprint); `.env`, `FERNET_KEY`
 and databases never go near it.
@@ -2966,8 +3266,8 @@ uses: `ssh <vps> sudo /usr/local/bin/xbox-deploy test|prod`.
   `prerelease`: `changelog/<v>.ru.md`, `.en.md`, `.contributors.md`, and
   `.summary.ru.txt` / `.summary.en.txt` (5–8 `•` bullets for the announcement), where
   `<v>` is `A.B.C`. `main` then always carries its own notes and the announcement
-  links never 404. **A release without a new minor is a hotfix** (owner,
-  2026-10-12): its notes say so in the title (`# 1.8.5 — хотфикс — …`) and
+  links never 404. **A release without a new minor is a hotfix or a small update** (owner,
+  2026-10-12, 2026-10-31): its notes say so in the title (`# 0.3.1 — хотфикс — …`) and
   the first line, and the announcement's header says so by itself
   (`release_notify.is_hotfix`: C above 0). Under each note's title, a line links its other language
   (owner, 2026-10-10): `**Русский** · [English](<v>.en.md)` in the Russian one,
@@ -2977,7 +3277,7 @@ uses: `ssh <vps> sudo /usr/local/bin/xbox-deploy test|prod`.
   merged into `main` deployed at once, and production announced a version with no
   notes behind its link.
 - **A release that starts a new minor** bumps `TRUNK_LINE` on `prerelease`, and the
-  merge into `main` is made locally, tagged `vX.Y.0`, and pushed **tag first, then
+  merge into `main` is made locally, tagged `v0.Y.0`, and pushed **tag first, then
   `main`**: the deploy starts on the push and counts C from the newest tag, so a tag
   added after a GitHub merge arrives too late (production would read `X.Y.N`).
 - **On startup each bot announces a new version** (`services/release_notify.py`) once,
@@ -2999,24 +3299,54 @@ uses: `ssh <vps> sudo /usr/local/bin/xbox-deploy test|prod`.
   column. A decrypted value, when genuinely needed (re-encrypting after a `FERNET_KEY`
   change), stays in memory; if it must touch disk, it lives in `backups/` and is
   overwritten and deleted before the task ends.
-- **Back up with `sqlite3`'s `backup()`, never `cp`** — the databases run in WAL mode.
-  Name copies for what and when: `bot-pre042-20260915-084500.db`.
+- **Back up with the database's own tool, never `cp`**: `pg_dump` of the server's
+  schema and of `games` on PostgreSQL; `sqlite3`'s `backup()` for an SQLite file
+  (WAL mode). Name copies for what and when: `bot-pre042-20260915-084500.db`.
 
 ## Engineering rules
 
 History: #112.
 
 - Handlers are thin — services and repo methods, never raw SQL or platform logic.
-- All SQL lives in `bot/db/repo/`, `schema.sql` and the migrations.
+- All SQL lives in `bot/db/repo/`, `bot/db/pg/` (the schema files and migrations).
 - **Writes that must land together go in `async with self.transaction()`** (#167,
-  `db/repo/_tx.py`). The bot has one connection: a transaction is the
-  connection's, so one coroutine's `commit()` used to commit another's half-written
-  work and a `rollback()` threw it away. While a block is open everybody else
-  waits before their next statement, `commit()` inside it waits for its end, an
-  exception rolls back only the block, and a block inside a block is a savepoint.
-  Never call `rollback()` (inside a block it raises); keep network calls and file
-  deletion out of a block — it holds the connection. Single statements stay as
-  they were: execute, then commit.
+  `db/repo/_tx.py`). The bot has one connection, in autocommit (#234): a
+  statement outside a block is its own transaction, so a failed one leaves
+  nothing half done, and `commit()` outside a block has nothing to do. A block
+  opens `BEGIN`; while it is open everybody else waits before their next
+  statement, `commit()` inside it waits for its end, an exception rolls back
+  only the block, and a block inside a block is a savepoint. Never call
+  `rollback()` (inside a block it raises); keep network calls and file deletion
+  out of a block — it holds the connection. A statement that fails inside a
+  block poisons the block (PostgreSQL refuses the rest until the rollback):
+  catch nothing there that you mean to go on after.
+- **SQL is PostgreSQL's, through `bot/db/postgres.py`** (#234). Write `?` or
+  `:name` placeholders as before (translated once per statement; a `%` anywhere
+  is doubled for psycopg). Numbers, bools and dates go **untyped** (oid 0), as
+  SQLite's loose typing took them: a bool is 1/0, a datetime ISO text with a
+  space; the flags are integer columns and the dates text. What that leaves to
+  write by hand:
+  - a placeholder tested alone for NULL needs a type: `?::text IS NULL`;
+  - `a IS NOT b` / `a IS b` (b not NULL) are `IS DISTINCT FROM` /
+    `IS NOT DISTINCT FROM`;
+  - no `INSERT OR IGNORE` / `OR REPLACE` / `UPDATE OR IGNORE`: `ON CONFLICT DO
+    NOTHING`, `ON CONFLICT (key) DO UPDATE SET …`, an update `WHERE NOT EXISTS`
+    the row it would collide with;
+  - every column of a `GROUP BY` select is grouped or aggregated (a table's
+    columns follow from its primary key); the row SQLite's `MIN`/`MAX` handed its
+    bare columns from is `DISTINCT ON (…) … ORDER BY`;
+  - an output name is read bare in `ORDER BY`, never inside an expression nor in
+    `WHERE` / `HAVING`: wrap the select in a subquery;
+  - `SUM`/`MAX` of a condition is of `CASE WHEN … THEN 1 ELSE 0 END`; the
+    scalar `MAX(a, b)` is `GREATEST`; `GROUP_CONCAT` is `string_agg`; `IFNULL`
+    is `COALESCE`; `LIMIT -1` is `LIMIT NULL`; JSON is `::jsonb` with `->>`
+    and `jsonb_array_elements`; now in our text format is
+    `to_char(now() AT TIME ZONE 'utc', 'YYYY-MM-DD"T"HH24:MI:SS')`;
+  - `LIKE` is case-sensitive (`ILIKE`, or `lower()` on both sides); there is no
+    `rowid` (an insertion order is a `seq` identity column) and no `lastrowid`
+    (`INSERT … RETURNING <id>`, read as a row: the adapter reads a statement's
+    rows at once, so nothing stays open on the connection); the jsonb operator
+    `?` cannot be written beside `?` placeholders (`jsonb_exists`).
 - Platform clients (`services/xbox|steam|psn`) know nothing about Telegram.
 - Everything is async; wrap synchronous libraries (`psnawp`) in `asyncio.to_thread`.
 - No new dependency unless clearly needed.
@@ -3051,6 +3381,14 @@ History: #112.
 .\.venv\Scripts\ruff check .
 .\.venv\Scripts\ruff format --check .
 ```
+
+**The tests run on PostgreSQL** (#234): their own database, `TEST_DATABASE_URL`
+(default the project's cluster on port 5433, database `unlocked_tests`, schema
+`app`), made empty once a run from the schema files; before each test one call
+(`public.reset_test_data()`) empties every table and resets every id counter.
+CI runs a `postgres:16` service. On Windows psycopg's async mode needs the
+selector event loop (`conftest.event_loop_policy`, `main.event_loop`). A test
+that needs foreign keys off says `SET session_replication_role = replica`.
 
 Real Xbox, Steam, PSN, HLTB or Telegram calls are forbidden in tests — mock at the
 service boundary.

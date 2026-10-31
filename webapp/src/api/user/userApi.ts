@@ -10,6 +10,7 @@ import type {
   MergePreview,
   MeResponse,
   UserSettingsPatch,
+  TimeZoneChoice,
   PasskeysResponse,
 } from "./userApiModels";
 
@@ -168,6 +169,16 @@ export class UserApi extends BaseApi {
     return this.delete<{ ok: boolean }>(initData, USER_ROUTES.DELETE_ME);
   }
 
+  /** The places the time zone picker offers; `device` (the phone's own zone)
+   * comes back apart, ready to be picked in one tap. */
+  timeZones(
+    initData: string,
+    locale: string,
+    device: string | null,
+  ): Promise<{ zones: TimeZoneChoice[]; device: TimeZoneChoice | null }> {
+    return this.get(initData, "/time-zones", { locale, device });
+  }
+
   patchSettings(initData: string, body: UserSettingsPatch): Promise<MeResponse> {
     return this.patch<MeResponse>(initData, USER_ROUTES.SETTINGS, body);
   }
@@ -236,6 +247,25 @@ export class UserApi extends BaseApi {
       USER_ROUTES.DISCONNECT_PSN,
       accountId ? { account_id: accountId } : {},
     );
+  }
+
+  /** A player's own PSN token for one linked account (#233). */
+  setPsnToken(initData: string, accountId: string, token: string): Promise<{ ok: boolean }> {
+    return this.put<{ ok: boolean }>(initData, USER_ROUTES.PSN_TOKEN, {
+      account_id: accountId,
+      token,
+    });
+  }
+
+  removePsnToken(initData: string, accountId: string): Promise<{ ok: boolean }> {
+    return this.delete<{ ok: boolean }>(initData, USER_ROUTES.PSN_TOKEN, { account_id: accountId });
+  }
+
+  /** Links the PSN account a token opens, and keeps the token (#233). */
+  connectPsnByToken(initData: string, token: string): Promise<{ ok: boolean; online_id?: string }> {
+    return this.post<{ ok: boolean; online_id?: string }>(initData, USER_ROUTES.CONNECT_PSN_TOKEN, {
+      token,
+    });
   }
 
   /** The owner's switch for a platform's posts (#20), or for one of its PSN

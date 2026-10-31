@@ -21,7 +21,7 @@ from aiohttp import web
 
 from bot.config import Settings
 from bot.db.repo import Repo
-from bot.services import game_page, pass_pictures, season_pass
+from bot.services import game_page, manual_games, pass_pictures, roles, season_pass
 from bot.services.naming import person_name
 from bot.util import utcnow
 from bot.web.mini_chat import _person_month
@@ -61,10 +61,13 @@ def setup_pass_routes(app: web.Application) -> None:
             b"pass-draft:" + settings.fernet_key.get_secret_value().encode()
         ).digest()
     app.router.add_get("/api/mini/pass", handle_pass)
+    app.router.add_post("/api/mini/pass/seen", handle_seen)
     app.router.add_post("/api/mini/pass/claim", handle_claim)
     app.router.add_post(ITEM + "/claim", handle_item_claim)
     app.router.add_get(ITEM + "/takers", handle_item_takers)
     app.router.add_post("/api/mini/pass/items", handle_item_add)
+    app.router.add_get("/api/mini/pass/game-search", handle_game_search)
+    app.router.add_post("/api/mini/pass/games", handle_game_add)
     app.router.add_patch(ITEM, handle_item_edit)
     app.router.add_delete(ITEM, handle_item_remove)
     app.router.add_post(ITEM + "/revert", handle_item_revert)
@@ -72,6 +75,10 @@ def setup_pass_routes(app: web.Application) -> None:
     # A level's picture is no secret: an <img> asks for it with no header.
     app.router.add_get(ITEM + "/image", handle_item_image)
     app.router.add_put("/api/mini/pass/season", handle_season_title)
+    app.router.add_put("/api/mini/pass/season/image", handle_season_image_put)
+    app.router.add_delete("/api/mini/pass/season/image", handle_season_image_delete)
+    # A cover is no secret either: an <img> asks for it with no header.
+    app.router.add_get("/api/mini/pass/season/image", handle_season_image)
     app.router.add_post("/api/mini/pass/publish", handle_publish)
     app.router.add_post("/api/mini/pass/discard", handle_discard)
 
@@ -86,21 +93,34 @@ def _picture(item_id: int, path: str | None, *, draft: bool = False) -> str | No
     return url + f"&draft=1&s={_sign(item_id, version)}" if draft else url
 
 
-def _sign(item_id: int, version: str) -> str:
+def _sign(item_id: int | str, version: str) -> str:
     if _key is None:
         return ""
     return hmac.new(_key, f"{item_id}:{version}".encode(), hashlib.sha256).hexdigest()[:32]
 
 
-def _signed(request: web.Request, item_id: int) -> bool:
+def _signed(request: web.Request, item_id: int | str) -> bool:
     given = request.query.get("s", "")
     return bool(given) and hmac.compare_digest(given, _sign(item_id, request.query.get("v", "")))
 
 
+def _cover(month: str, path: str | None, *, draft: bool = False) -> str | None:
+    if not path:
+        return None
+    version = path.rsplit("-", 1)[-1].split(".")[0]
+    url = f"/api/mini/pass/season/image?month={month}&v={version}"
+    # A cover waiting for the publish is the editor's, as a level's picture is.
+    return url + f"&draft=1&s={_sign('season:' + month, version)}" if draft else url
+
+
 async def _cards(repo: Repo, rows: list[dict[str, Any]]) -> dict[int, dict[str, Any]]:
-    """A game's prize shows the game: its card from the catalog."""
-    found = await repo.game_cards([int(r["game_id"]) for r in rows if r.get("game_id")])
-    return {gid: game_page.card_of(card) for gid, card in found.items()}
+    """A game's prize shows the game: its card from the catalog — the game it
+    is now, when the one a prize was made for (a game added by hand) has been
+    joined to a real one since."""
+    ids = {int(r["game_id"]) for r in rows if r.get("game_id")}
+    live = {gid: await repo.live_game_id(gid) or gid for gid in ids}
+    found = await repo.game_cards(sorted(set(live.values())))
+    return {gid: game_page.card_of(found[now]) for gid, now in live.items() if now in found}
 
 
 def _next_month(key: str) -> str:
@@ -170,6 +190,7 @@ async def _state(
                 "description": r["description"],
                 "points": r["points"],
                 "kind": r["kind"],
+                "tier": r["tier"],
                 "game": cards.get(int(r["game_id"])) if r["game_id"] else None,
                 "platform": r["platform"],
                 "image": _picture(r["item_id"], r["image_path"]),
@@ -183,8 +204,9 @@ async def _state(
         ],
         "admin": admin,
         "current": month == current,
-        # The month's theme, as published.
-        "title": (await repo.pass_season(month))["title"],
+        # The month's theme and cover, as published.
+        "title": (season := await repo.pass_season(month))["title"],
+        "image": _cover(month, season["image_path"]),
         "months": sorted({current, *await repo.pass_months(current)}, reverse=True),
     }
     if admin:
@@ -203,9 +225,12 @@ async def _editor(repo: Repo, month: str, months: list[str]) -> dict[str, Any]:
     return {
         "month": month,
         "title": season["draft_title"],
+        "image": _cover(month, season["draft_image_path"], draft=True),
         "title_changed": season["changed"],
         # Each month to pick, with how many levels it has and how many wait.
-        "months": [{"month": m, **counts.get(m, {"levels": 0, "dirty": 0})} for m in months],
+        "months": [
+            {"title": None, **counts.get(m, {"levels": 0, "dirty": 0}), "month": m} for m in months
+        ],
         "scores": await _month_scores(repo),
         "dirty": sum(1 for r in rows if r["state"] == "draft" or r["changed"] or r["remove"])
         + int(season["changed"]),
@@ -272,8 +297,12 @@ async def _person(request: web.Request) -> tuple[Repo, int, bool]:
     user = await _require_user(request)
     if user.person_id is None:
         raise web.HTTPForbidden(text="no person")
-    settings: Settings = request.app["mini_settings"]
-    return request.app["mini_repo"], user.person_id, settings.is_superadmin(user.tg_id)
+    repo: Repo = request.app["mini_repo"]
+    # The pass's editor: a super-admin or an admin (owner, 2026-10-28).
+    admin = request.app["mini_settings"].is_superadmin(user.tg_id) or roles.runs_the_app(
+        await repo.person_role(user.person_id)
+    )
+    return repo, user.person_id, admin
 
 
 async def _admin(request: web.Request) -> tuple[Repo, int]:
@@ -348,7 +377,9 @@ async def _fields(
         codes = [str(c).strip() for c in raw if str(c).strip()] if isinstance(raw, list) else []
         if not codes or len(codes) > CODES_MAX or any(len(c) > CODE_MAX for c in codes):
             return "invalid"
-    if kind == "game":
+    # A game of the catalog, or one it lacks named by its title alone
+    # (owner, 2026-10-28); a code is for anything that is no game.
+    if kind == "game" and body.get("game_id") is not None:
         try:
             game_id = await repo.live_game_id(int(body.get("game_id")))
         except (TypeError, ValueError):
@@ -356,8 +387,68 @@ async def _fields(
         if game_id is None:
             return "no_game"
         fields["game_id"] = game_id
-    fields.update(title=title, description=description)
+    # A prize's look is a tier as a theme's is (owner, 2026-10-28).
+    look = str(body.get("tier") or "common")
+    if look not in season_pass.LOOKS:
+        return "invalid"
+    fields.update(title=title, description=description, tier=look)
     return fields, codes
+
+
+GAME_NAME_MAX = 120
+
+
+async def handle_game_search(request: web.Request) -> web.Response:
+    """The prize picker's search of the stores' own catalogs (Steam, Xbox),
+    for a game ours lacks (owner, 2026-10-30): `?q=` -> `{name, image,
+    stores}`. **A game the catalog already has is left out** — it is picked
+    from the catalog's own search, and a hand-added game must never be a
+    duplicate."""
+    repo, _person = await _admin(request)
+    term = request.query.get("q", "").strip()
+    if len(term) < 2 or len(term) > GAME_NAME_MAX:
+        return web.json_response({"ok": True, "games": []})
+    index = await repo.game_name_index()
+    new = [
+        hit
+        for hit in await manual_games.search_stores(term)
+        if await manual_games.existing_game(repo, hit["name"], hit["stores"], index) is None
+    ]
+    return web.json_response({"ok": True, "games": new})
+
+
+async def handle_game_add(request: web.Request) -> web.Response:
+    """A game the picker found in the stores, as a prize's game: the one our
+    catalog already has (by a store id, or by name), else added by hand and
+    queued for the octopus to fill in (`Repo.add_manual_game`). Body: `{name,
+    stores: [{store, id}]}` -> `{game: card, made}`."""
+    repo, _person = await _admin(request)
+    body = await _body(request)
+    name = str(body.get("name") or "").strip()
+    stores = body.get("stores")
+    if not 2 <= len(name) <= GAME_NAME_MAX or not isinstance(stores, list) or not stores:
+        return _refuse("invalid")
+    refs: list[dict[str, str]] = []
+    for ref in stores[:4]:
+        store, store_id = str(ref.get("store") or ""), str(ref.get("id") or "")
+        if manual_games.queue_key(store, store_id) is None:
+            return _refuse("invalid")
+        refs.append({"store": store, "id": store_id})
+
+    game_id = await manual_games.existing_game(repo, name, refs)
+    made = False
+    if game_id is None:
+        game_id, made = await repo.add_manual_game(
+            name, None, manual_games.queue_key(refs[0]["store"], refs[0]["id"])
+        )
+        for ref in refs[1:]:
+            await repo.octopus_enqueue(
+                manual_games.queue_key(ref["store"], ref["id"]) or "", "manual"
+            )
+    card = (await repo.game_cards([game_id])).get(game_id)
+    if card is None:
+        return _refuse("no_game", 404)
+    return web.json_response({"ok": True, "made": made, "game": game_page.card_of(card)})
 
 
 async def _unclaimed(repo: Repo, item_id: int, month: str) -> dict[str, Any] | web.Response:
@@ -389,6 +480,14 @@ async def _edited(repo: Repo, person_id: int, request: web.Request) -> web.Respo
     """The pass again after an edit, the editor on the month edited."""
     edit = await _edit_month(repo, person_id, request)
     return web.json_response(await _state(repo, person_id, admin=True, edit=edit))
+
+
+async def handle_seen(request: web.Request) -> web.Response:
+    """The pass's own page was opened: who has looked is not told the season started
+    (`poller/season_start.py`). Not `GET /pass`: Home and Settings read that too."""
+    repo, person_id, _admin = await _person(request)
+    await repo.mark_pass_seen(person_id, (await _person_month(repo, person_id, None))[3])
+    return web.json_response({"ok": True})
 
 
 async def handle_claim(request: web.Request) -> web.Response:
@@ -554,6 +653,49 @@ async def handle_season_title(request: web.Request) -> web.Response:
         return _refuse("invalid")
     await repo.set_pass_season_title(await _edit_month(repo, person_id, request), title)
     return await _edited(repo, person_id, request)
+
+
+async def handle_season_image_put(request: web.Request) -> web.Response:
+    """The edited month's cover: the body is the image's bytes, saved again by
+    the server, waiting for the month's publish."""
+    from bot.web.mini_api import _read_capped
+
+    repo, person_id = await _admin(request)
+    month = await _edit_month(repo, person_id, request)
+    body = await _read_capped(request, pass_pictures.MAX_UPLOAD_BYTES)
+    path = await pass_pictures.store(month, body, kind="season") if body else None
+    if path is None:
+        return _refuse("invalid")
+    pass_pictures.remove(await repo.set_pass_season_image(month, path))
+    return await _edited(repo, person_id, request)
+
+
+async def handle_season_image_delete(request: web.Request) -> web.Response:
+    repo, person_id = await _admin(request)
+    month = await _edit_month(repo, person_id, request)
+    pass_pictures.remove(await repo.set_pass_season_image(month, None))
+    return await _edited(repo, person_id, request)
+
+
+async def handle_season_image(request: web.Request) -> web.Response:
+    repo: Repo = request.app["mini_repo"]
+    month = request.query.get("month", "")
+    season = await repo.pass_season(month)
+    draft = bool(request.query.get("draft"))
+    if draft and not _signed(request, "season:" + month):
+        raise web.HTTPNotFound(text="no picture")
+    path = season["draft_image_path"] if draft else season["image_path"]
+    if not path:
+        raise web.HTTPNotFound(text="no picture")
+    try:
+        body = pass_pictures.read(path)
+    except OSError:
+        raise web.HTTPNotFound(text="no picture") from None
+    return web.Response(
+        body=body,
+        content_type="image/jpeg",
+        headers={"Cache-Control": "public, max-age=604800, immutable"},
+    )
 
 
 async def handle_publish(request: web.Request) -> web.Response:

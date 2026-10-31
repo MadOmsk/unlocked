@@ -369,26 +369,19 @@
   border-radius: 6px;
 }
 
+/* What a developer's post is, as a word in its colour — as a post's kicker. */
 .kind {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  height: 24px;
-  padding: 0 10px 0 8px;
-  border-radius: 12px;
-  font-size: 12.5px;
-  font-weight: 700;
+  font-size: 13px;
+  font-weight: 650;
   white-space: nowrap;
 }
 
 .kind-patch {
-  background: var(--secondary-container);
-  color: var(--on-secondary-container);
+  color: var(--secondary);
 }
 
 .kind-news {
-  background: var(--tertiary-container);
-  color: var(--on-tertiary-container);
+  color: var(--tertiary);
 }
 
 .favs {
@@ -411,7 +404,10 @@
   height: 184px;
   flex: 0 0 auto;
   display: flex;
+  flex-direction: column;
   align-items: center;
+  justify-content: center;
+  gap: 10px;
   padding: 12px;
   border: 2px dashed var(--outline);
   border-radius: var(--r-l);
@@ -485,16 +481,16 @@
   overflow: hidden;
 }
 
-/* Expressive's shape behind the place, a shade lighter than the card. */
+/* Expressive's shape behind the place, centred on it, a shade lighter than the card. */
 .home-hero-deco {
   position: absolute;
   z-index: -1;
-  right: -56px;
-  top: 34px;
-  width: 230px;
-  height: 230px;
+  right: -52px;
+  top: -14px;
+  width: 252px;
+  height: 252px;
   background: var(--primary-container-2);
-  transform: rotate(18deg);
+  transform: rotate(58deg);
 }
 
 .home-hero-nav {
@@ -676,6 +672,7 @@
   color: var(--on-primary-container);
 }
 
+
 .home-hero-person-behind {
   color: var(--on-primary-container-2);
   background: transparent;
@@ -692,29 +689,18 @@
   letter-spacing: 0.03em;
 }
 
-.home-hero-num {
+
+/* The month's points, a size down from the display face; by the shown
+   length ("2 230" is 5) a long one smaller still. */
+.home-hero .home-hero-num {
   margin-top: 4px;
+  font-size: 84px;
   color: var(--on-primary-container);
 }
 
-/* The month's figures beside the count: the words quiet, the numbers lit. */
-.home-hero-line {
-  display: flex;
-  white-space: nowrap;
-  margin-top: 8px;
-  font-size: 14px;
-  color: var(--on-primary-container-2);
-}
-
-.home-hero-line > span + span::before {
-  content: "·";
-  margin: 0 7px;
-  opacity: 0.6;
-}
-
-.home-hero-line b {
-  font-size: 15px;
-  color: var(--on-primary-container);
+.home-hero .home-hero-num-6,
+.home-hero .home-hero-num-7 {
+  font-size: 68px;
 }
 
 .home-hero .home-hero-ghost {
@@ -724,8 +710,8 @@
 }
 
 .home-hero-ghost-num {
-  width: 120px;
-  height: 96px;
+  width: 170px;
+  height: 76px;
   margin-top: 8px;
   border-radius: var(--r-m);
 }
@@ -750,13 +736,6 @@
   width: 40px;
   height: 22px;
   border-radius: 11px;
-}
-
-.home-hero-ghost-line {
-  width: 110px;
-  height: 14px;
-  margin-top: 10px;
-  border-radius: 7px;
 }
 
 @keyframes ghost {
@@ -793,7 +772,8 @@
   text-align: left;
 }
 
-.tile-skel {
+/* One block as wide as two tiles and a half. */
+.tile.tile-skel {
   height: 214px;
 }
 
@@ -816,9 +796,9 @@
 .tile-badge {
   position: absolute;
   right: -6px;
-  bottom: -12px;
-  width: 54px;
-  height: 54px;
+  bottom: -10px;
+  width: 46px;
+  height: 46px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -933,6 +913,7 @@
   text-align: left;
 }
 
+/* One block, as wide as two cards and a half: what stands in for a rail. */
 .game-tile-skel {
   height: 250px;
   border-radius: var(--r-l);
@@ -952,15 +933,20 @@
 }
 
 .game-tile-cover {
+  /* 2:3, the stores' portrait art, so a poster is never cropped. */
   width: 138px;
-  height: 184px;
+  height: 207px;
   border-radius: var(--r-l);
 }
 
+/* On the cover's corner, as the done mark is. */
 .game-tile-art .fav-heart {
   position: absolute;
-  right: 8px;
-  bottom: 8px;
+  right: -6px;
+  bottom: -8px;
+  width: 34px;
+  height: 34px;
+  box-shadow: 0 0 0 4px var(--surface);
 }
 
 .game-tile-art .done-mark {
@@ -1035,4 +1021,205 @@
 .plat-pick-on .row-title,
 .plat-pick-on .row-trail {
   color: var(--primary);
+}
+
+/* A trending game's count, on its cover's corner as a rarity flower is. */
+.game-tile-art .trend-mark {
+  position: absolute;
+  right: -8px;
+  bottom: -12px;
+  width: 58px;
+  height: 58px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+  background: var(--primary);
+  color: var(--on-primary);
+  box-shadow: var(--shadow-1);
+}
+
+.trend-mark b {
+  font-size: 17px;
+}
+
+.trend-mark small {
+  margin-top: 1px;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.ach-side {
+  flex: 0 0 auto;
+  align-self: flex-start;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+  margin-top: 1px;
+}
+
+/* The app's points: the logo's sparkle, the number beside it — the app's own
+   currency, not a word after a number. */
+.pts-coin {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  color: var(--on-surface);
+  font-size: 13px;
+  line-height: 1;
+}
+
+.pts-coin b {
+  line-height: 1;
+}
+
+/* Digits stand on the baseline with no descender: their middle is above the
+   line box's, and the sparkle is set level with them. */
+.pts-coin-spark {
+  flex: 0 0 auto;
+  width: 0.95em;
+  height: 0.95em;
+  fill: var(--tertiary);
+  transform: translateY(-0.07em);
+}
+
+.marks .pts-coin {
+  font-size: 14px;
+}
+
+
+.pts-coin small {
+  font-size: 0.85em;
+  font-weight: 700;
+  opacity: 0.75;
+}
+
+/* A coin on its own in a page's meta line or a list's head. */
+.pts-coin-m {
+  font-size: 15px;
+}
+
+
+.home-hero-num {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.home-hero-spark {
+  flex: 0 0 auto;
+  width: 0.42em;
+  height: 0.42em;
+  /* The sparkle's own margin in its box (2 of 24) taken back: its tip on the card's edge. */
+  margin-left: -0.035em;
+  fill: var(--tertiary);
+  transform: translateY(-0.04em);
+}
+
+/* Points on a tier's flower: the sparkle, then the number. */
+.flower-pts {
+  display: inline-flex;
+  align-items: center;
+  gap: 0;
+  font-size: 13.5px;
+}
+
+.flower-spark {
+  width: 0.75em;
+  height: 0.75em;
+  margin-right: -1px;
+  fill: currentColor;
+  transform: translateY(-0.05em);
+}
+
+/* On top of the step, as the number alone was. */
+.podium-coin {
+  align-self: flex-start;
+  font-size: 26px;
+  color: inherit;
+}
+
+.podium-coin .pts-coin-spark {
+  width: 0.7em;
+  height: 0.7em;
+}
+
+.rank-hero-num {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.rank-hero-spark {
+  flex: 0 0 auto;
+  width: 0.5em;
+  height: 0.5em;
+  fill: var(--tertiary);
+  transform: translateY(-0.04em);
+}
+
+.rank-hero-line .pts-coin {
+  vertical-align: -1px;
+  color: inherit;
+}
+
+.ach-pic-wrap {
+  position: relative;
+  flex: 0 0 auto;
+  margin: 0 8px 8px 0;
+}
+
+.ach-flower {
+  position: absolute;
+  right: -10px;
+  bottom: -10px;
+  width: 42px;
+  height: 42px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.ach-flower .flower-pts {
+  font-size: 12px;
+}
+
+/* In a game's list every picture is a square, as a news or DLC row's is;
+   a wide one is cut to fit. */
+.ach-pic-wrap .ach-pic-wide,
+.ach-pic-wrap .ach-pic-square {
+  width: 60px;
+  height: 60px;
+  border-radius: var(--r-s);
+}
+
+.ach-kicker {
+  display: block;
+  margin-bottom: 2px;
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--on-surface-3);
+}
+
+.ach-kicker.mark-rare {
+  color: var(--tier-epic);
+}
+
+.ach-kicker.mark-legendary {
+  color: var(--tier-legendary);
+}
+
+.ach-kicker.mark-mythic {
+  color: var(--tier-mythic);
+}
+
+/* The season's name under the month, as the pass's head says it. */
+.home-hero-season {
+  margin: -4px 0 4px;
+  font-size: 22px;
+  font-weight: 800;
+  font-stretch: 112%;
+  line-height: 1.15;
 }

@@ -52,8 +52,10 @@ class _PlatformLinksRepo:
             [{"apiname": a.apiname, "icon": a.icon, "hidden": a.hidden} for a in achievements]
         )
         await self._conn.execute(
-            "INSERT OR REPLACE INTO steam_schema_cache (appid, game_name, achievements, cached_at) "
-            "VALUES (?, ?, ?, ?)",
+            "INSERT INTO steam_schema_cache (appid, game_name, achievements, cached_at) "
+            "VALUES (?, ?, ?, ?)"
+            " ON CONFLICT (appid) DO UPDATE SET game_name = excluded.game_name, achievements = "
+            "excluded.achievements, cached_at = excluded.cached_at",
             (appid, game_name, blob, utcnow_iso()),
         )
         await self._conn.commit()
@@ -74,8 +76,10 @@ class _PlatformLinksRepo:
 
     async def steam_rarity_cache_result(self, appid: str, percentages: dict[str, float]) -> None:
         await self._conn.execute(
-            "INSERT OR REPLACE INTO steam_rarity_cache (appid, percentages, cached_at) "
-            "VALUES (?, ?, ?)",
+            "INSERT INTO steam_rarity_cache (appid, percentages, cached_at) "
+            "VALUES (?, ?, ?)"
+            " ON CONFLICT (appid) DO UPDATE SET percentages = excluded.percentages, cached_at = "
+            "excluded.cached_at",
             (appid, json.dumps(percentages), utcnow_iso()),
         )
         await self._conn.commit()
@@ -210,8 +214,9 @@ class _PlatformLinksRepo:
             "  SELECT platform, external_id FROM account_links"
             "  WHERE person_id = ? AND platform = ? AND is_active = 1"
             # One account's nickname, where a person holds several (#10).
-            "    AND (? IS NULL OR external_id = ?))"
-            "  AND (display_name IS NOT ? OR (? IS NOT NULL AND secondary_name IS NOT ?))",
+            "    AND (?::text IS NULL OR external_id = ?))"
+            "  AND (display_name IS DISTINCT FROM ? OR (?::text IS NOT NULL AND secondary_name"
+            " IS DISTINCT FROM ?))",
             (
                 display_name,
                 secondary_name,
@@ -244,7 +249,7 @@ class _PlatformLinksRepo:
             "WHERE (platform, external_id) IN ("
             "  SELECT platform, external_id FROM account_links"
             "  WHERE person_id = ? AND platform = ? AND is_active = 1"
-            "    AND (? IS NULL OR external_id = ?))",
+            "    AND (?::text IS NULL OR external_id = ?))",
             (secondary_name, utcnow_iso(), person_id, platform, external_id, external_id),
         )
         await self._conn.commit()
@@ -254,7 +259,7 @@ class _PlatformLinksRepo:
         a person may hold several (PSN, #10)."""
         cursor = await self._conn.execute(
             self._LINK_COLUMNS + "WHERE al.person_id = ? AND al.platform = ? AND al.is_active = 1 "
-            "ORDER BY al.linked_at, al.rowid LIMIT 1",
+            "ORDER BY al.linked_at, al.seq LIMIT 1",
             (person_id, platform),
         )
         row = await cursor.fetchone()
@@ -265,7 +270,7 @@ class _PlatformLinksRepo:
         first — several only on PSN (#10)."""
         cursor = await self._conn.execute(
             self._LINK_COLUMNS + "WHERE al.person_id = ? AND al.platform = ? AND al.is_active = 1 "
-            "ORDER BY al.linked_at, al.rowid",
+            "ORDER BY al.linked_at, al.seq",
             (person_id, platform),
         )
         return [_as_platform_link(row) for row in await cursor.fetchall()]
@@ -297,7 +302,7 @@ class _PlatformLinksRepo:
             + clause
             + "ORDER BY CASE al.platform WHEN 'xbox' THEN 0 WHEN 'psn' THEN 1 ELSE 2 END,"
             # Several PSN accounts (#10): first linked first, everywhere.
-            "  al.linked_at, al.rowid",
+            "  al.linked_at, al.seq",
             (person_id,),
         )
         return [_as_platform_link(row) for row in await cursor.fetchall()]
@@ -305,8 +310,7 @@ class _PlatformLinksRepo:
     async def platform_links_all(self, platform: str) -> list[PlatformLink]:
         """Every *active* link on one platform, across every person —
         `platform_links_of` narrowed to one person, this is the bot-wide
-        counterpart (2026-09-05, scripts/backfill_steam_titles.py: needs
-        every Steam link to reconcile, not any one person's)."""
+        counterpart."""
         cursor = await self._conn.execute(
             self._LINK_COLUMNS + "WHERE al.platform = ? AND al.is_active = 1",
             (platform,),
@@ -321,7 +325,7 @@ class _PlatformLinksRepo:
             "WHERE (platform, external_id) IN ("
             "  SELECT platform, external_id FROM account_links"
             "  WHERE person_id = ? AND platform = 'psn' AND is_active = 1"
-            "    AND (? IS NULL OR external_id = ?))",
+            "    AND (?::text IS NULL OR external_id = ?))",
             (level, utcnow_iso(), person_id, account_id, account_id),
         )
         await self._conn.commit()
@@ -336,7 +340,7 @@ class _PlatformLinksRepo:
             "WHERE (platform, external_id) IN ("
             "  SELECT platform, external_id FROM account_links"
             "  WHERE person_id = ? AND platform = ? AND is_active = 1"
-            "    AND (? IS NULL OR external_id = ?))",
+            "    AND (?::text IS NULL OR external_id = ?))",
             (int(visible), now, now, person_id, platform, external_id, external_id),
         )
         await self._conn.commit()
@@ -350,6 +354,10 @@ class _PlatformLinksRepo:
             "WHERE person_id = ? AND platform = ? AND is_active = 1",
             (utcnow_iso(), person_id, platform),
         )
+        # A personal PSN token never outlives its link (#233).
+        await self._conn.execute(
+            "DELETE FROM psn_tokens WHERE person_id = ? AND ? = 'psn'", (person_id, platform)
+        )
         await self._conn.commit()
 
     async def unlink_account(self, person_id: int, platform: str, external_id: str) -> None:
@@ -358,6 +366,10 @@ class _PlatformLinksRepo:
             "UPDATE account_links SET is_active = 0, unlinked_at = ? "
             "WHERE person_id = ? AND platform = ? AND external_id = ? AND is_active = 1",
             (utcnow_iso(), person_id, platform, external_id),
+        )
+        await self._conn.execute(
+            "DELETE FROM psn_tokens WHERE account_id = ? AND person_id = ? AND ? = 'psn'",
+            (external_id, person_id, platform),
         )
         await self._conn.commit()
 
@@ -463,7 +475,7 @@ class _PlatformLinksRepo:
             "LEFT JOIN achievement_list_connectors t ON t.platform = s.platform AND t.title_id = "
             "s.title_id "
             "WHERE s.account_platform = ? AND s.trophy_group_id IS NULL "
-            "GROUP BY s.xuid, s.title_id "
+            "GROUP BY s.xuid, s.title_id, al.person_id, t.platforms "
             "UNION ALL "
             "SELECT al.person_id, p.account_id, p.np_communication_id, t.platforms, p.updated_at "
             "FROM psn_title_progress p "

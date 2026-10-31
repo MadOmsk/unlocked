@@ -3,12 +3,14 @@ import { ApiError, gameApi, type GameCard } from "../../api";
 import { passApi, type Look, type PassEditor, type PassEditorItem, type PassItemInput, type PassReward, type PassTaker } from "../../api/season-pass/seasonPassApi";
 import { PlatformMark } from "../../parts/AccountCard";
 import { useApp } from "../../app/context";
+import { capital } from "../../parts/Months";
 import type { Palette } from "../../app/env";
 import { TIER_NAME } from "../../app/views";
 import { tick } from "../../core/haptic";
 import { PALETTE_NAMES, removeItem, revertItem, saveItem } from "../../core/season-pass";
 import { formatWhen, num, type TranslationKey } from "../../i18n";
 import { Button, Field, Row, Spinner } from "../../ui/Controls";
+import { AddGameOver } from "../home/AddGame";
 import { Face } from "../../ui/Face";
 import { Cover } from "../../ui/Pic";
 import { Icon, type IconName } from "../../ui/Icon";
@@ -78,24 +80,30 @@ export function ItemEditor({ item, editor, onClose }: { item: PassEditorItem | n
   const free = editor.palettes.filter((p) => !used.has(p));
   const [palette, setPalette] = useState<string>(item?.palette ?? free[0] ?? "");
   const [tier, setTier] = useState<Look>(item?.tier ?? "common");
+  const [prizeTier, setPrizeTier] = useState<Look>((item && item.kind !== "theme" ? item.tier : null) ?? "common");
   const [game, setGame] = useState<GameCard | null>(item?.game ?? null);
   const [platform, setPlatform] = useState<string | null>(item?.platform ? platformName(item.platform) : null);
   const [choosingPlatform, setChoosingPlatform] = useState(false);
   const [query, setQuery] = useState("");
-  const [hits, setHits] = useState<GameCard[]>([]);
+  const [catalogHits, setCatalogHits] = useState<GameCard[]>([]);
+  const [searching, setSearching] = useState(false);
+  const [addingGame, setAddingGame] = useState(false);
   useEffect(() => {
     const q = query.trim();
     if (kind !== "game" || game || q.length < 2) {
-      setHits([]);
+      setCatalogHits([]);
       return;
     }
     let live = true;
+    // Our catalog only; a game it lacks is added on a page of its own («Добавить игру»).
     const id = window.setTimeout(() => {
+      setSearching(true);
       gameApi
         .searchGames(data, q)
-        .then((res) => live && setHits(res.games.slice(0, 6)))
-        .catch(() => undefined);
-    }, 250);
+        .then((res) => live && setCatalogHits(res.games.slice(0, 6)))
+        .catch(() => undefined)
+        .finally(() => live && setSearching(false));
+    }, 350);
     return () => {
       live = false;
       window.clearTimeout(id);
@@ -133,7 +141,7 @@ export function ItemEditor({ item, editor, onClose }: { item: PassEditorItem | n
   const theme = kind === "theme";
   const ready =
     /^\d+$/.test(points.trim()) &&
-    (theme ? Boolean(palette) : title.trim().length > 0 && list.length > 0 && (kind === "code" || game != null));
+    (theme ? Boolean(palette) : title.trim().length > 0 && list.length > 0);
   const shown = preview || (item?.kind !== "theme" ? item?.image : null) || (game ? game.hero || game.poster : null);
 
   const save = async () => {
@@ -148,6 +156,7 @@ export function ItemEditor({ item, editor, onClose }: { item: PassEditorItem | n
             description: description.trim(),
             game_id: kind === "game" ? (game?.game_id ?? null) : null,
             platform: platform?.trim() || null,
+            tier: prizeTier,
             ...(item == null || codesTouched || item.kind === "theme" ? { codes: list } : {}),
           };
       await saveItem(data, item?.id ?? null, input, theme ? null : image);
@@ -183,8 +192,8 @@ export function ItemEditor({ item, editor, onClose }: { item: PassEditorItem | n
           <div className="group-items">
             <Row
               lead={
-                <span className="pass-kind-icon">
-                  <Icon name={kindOf.icon} size={22} />
+                <span className="set-lead set-lead-secondary shape-cookie9">
+                  <Icon name={kindOf.icon} size={20} />
                 </span>
               }
               title={tr(kindOf.name)}
@@ -195,6 +204,18 @@ export function ItemEditor({ item, editor, onClose }: { item: PassEditorItem | n
                 setPicking(true);
               }}
             />
+            {!theme && (
+              <Row
+                lead={<PrizePlatformMark name={platform} size={40} />}
+                title={platform || tr("passPrizePlatformNone")}
+                sub={tr("passPrizePlatform")}
+                chevron
+                onClick={() => {
+                  tick();
+                  setChoosingPlatform(true);
+                }}
+              />
+            )}
           </div>
         </div>
         {theme ? (
@@ -218,26 +239,7 @@ export function ItemEditor({ item, editor, onClose }: { item: PassEditorItem | n
               ))}
             </div>
             {!free.length && <p className="pass-edit-note">{tr("passEditNoPalette")}</p>}
-            <div className="field">
-              <span className="field-label">{tr("passEditLook")}</span>
-              <div className="pass-edit-looks">
-                {LOOKS.map((l) => (
-                  <button
-                    key={l}
-                    type="button"
-                    className={`pass-edit-look pass-tier-${l}${l === tier ? " is-on" : ""}`}
-                    aria-pressed={l === tier}
-                    onClick={() => {
-                      tick();
-                      setTier(l);
-                    }}
-                  >
-                    <span className="pass-edit-look-dot shape-cookie9" />
-                    {tr(TIER_NAME[l])}
-                  </button>
-                ))}
-              </div>
-            </div>
+            <LookPicker value={tier} onChange={setTier} />
           </>
         ) : (
           <>
@@ -257,16 +259,26 @@ export function ItemEditor({ item, editor, onClose }: { item: PassEditorItem | n
                 </button>
               ) : (
                 <div className="pass-add-search">
-                  <Field icon="search" placeholder={tr("passPrizeGameFind")} value={query} onChange={(e) => setQuery(e.target.value)} />
-                  {hits.length > 0 && (
+                  <Field
+                    icon="search"
+                    placeholder={tr("passPrizeGameFind")}
+                    value={query}
+                    onChange={(e) => setQuery(e.target.value)}
+                    trail={
+                      <button type="button" className="link-btn" onClick={() => setAddingGame(true)}>
+                        {tr("addGameButton")}
+                      </button>
+                    }
+                  />
+                  {catalogHits.length > 0 && (
                     <div className="group">
                       <div className="group-items">
-                        {hits.map((g) => (
+                        {catalogHits.map((g) => (
                           <Row
                             key={g.game_id}
                             lead={<Cover src={g.poster || g.hero} className="gp-rel-cover" />}
                             title={gameName(g)}
-                            sub={g.year ? String(g.year) : undefined}
+                            sub={g.year ? String(g.year) : tr("passPrizeGameInCatalog")}
                             onClick={() => {
                               setGame(g);
                               if (!title.trim()) setTitle(gameName(g));
@@ -276,10 +288,13 @@ export function ItemEditor({ item, editor, onClose }: { item: PassEditorItem | n
                       </div>
                     </div>
                   )}
+                  {!searching && catalogHits.length === 0 && query.trim().length >= 2 && (
+                    <p className="pass-edit-note">{tr("passPrizeGameNone")}</p>
+                  )}
                 </div>
               ))}
             <label className={`pass-add-pic${shown ? " pass-add-pic-on" : ""}`}>
-              {shown ? <img src={shown} alt="" /> : <Icon name="image" size={28} />}
+              {shown ? <img src={shown} alt="" /> : <Icon name="image" size={24} />}
               <span>{shown ? tr("passRewardPicChange") : tr("passRewardPic")}</span>
               <input
                 type="file"
@@ -290,20 +305,7 @@ export function ItemEditor({ item, editor, onClose }: { item: PassEditorItem | n
                 }}
               />
             </label>
-            <div className="group">
-              <div className="group-items">
-                <Row
-                  lead={<PrizePlatformMark name={platform} size={36} />}
-                  title={platform || tr("passPrizePlatformNone")}
-                  sub={tr("passPrizePlatform")}
-                  chevron
-                  onClick={() => {
-                    tick();
-                    setChoosingPlatform(true);
-                  }}
-                />
-              </div>
-            </div>
+            <LookPicker value={prizeTier} onChange={setPrizeTier} />
             <Field label={tr("passRewardName")} value={title} maxLength={80} onChange={(e) => setTitle(e.target.value)} />
             <Field label={tr("passRewardAbout")} value={description} maxLength={500} onChange={(e) => setDescription(e.target.value)} />
           </>
@@ -370,7 +372,7 @@ export function ItemEditor({ item, editor, onClose }: { item: PassEditorItem | n
                 <Row
                   key={k.kind}
                   lead={
-                    <span className="pass-kind-icon">
+                    <span className="set-lead set-lead-secondary shape-cookie9">
                       <Icon name={k.icon} size={22} />
                     </span>
                   }
@@ -413,13 +415,23 @@ export function ItemEditor({ item, editor, onClose }: { item: PassEditorItem | n
           onDone={cropped}
         />
       )}
+      {addingGame && (
+        <AddGameOver
+          layer="pass-add-game"
+          onClose={() => setAddingGame(false)}
+          onAdded={(g) => {
+            setGame(g);
+            if (!title.trim()) setTitle(gameName(g));
+          }}
+        />
+      )}
     </Sheet>
   );
 }
 
 /** A phone's photo made small enough to send: at most 1600 px on its longer
  * side, a JPEG. The server saves it again whatever it gets. */
-async function shrink(file: File): Promise<Blob> {
+export async function shrink(file: File): Promise<Blob> {
   try {
     const bitmap = await createImageBitmap(file);
     const scale = Math.min(1, 1600 / Math.max(bitmap.width, bitmap.height));
@@ -457,7 +469,7 @@ export function PrizePlatformMark({ name, size }: { name: string | null; size: n
   return key ? (
     <PlatformMark platform={key} size={size} />
   ) : (
-    <span className="pass-kind-icon" style={{ width: size, height: size }}>
+    <span className="set-lead set-lead-secondary shape-cookie9" style={{ width: size, height: size }}>
       <Icon name="gamepad" size={Math.round(size * 0.55)} />
     </span>
   );
@@ -565,5 +577,32 @@ export function TakersSheet({ reward, onClose }: { reward: PassReward; onClose: 
         )}
       </div>
     </Sheet>
+  );
+}
+
+/** A level's look: its tier, the same for a theme, a game or a code. */
+function LookPicker({ value, onChange }: { value: Look; onChange: (look: Look) => void }) {
+  const { tr } = useApp();
+  return (
+    <div className="field">
+      <span className="field-label">{tr("passEditLook")}</span>
+      <div className="pass-edit-looks">
+        {LOOKS.map((l) => (
+          <button
+            key={l}
+            type="button"
+            className={`pass-edit-look pass-tier-${l}${l === value ? " is-on" : ""}`}
+            aria-pressed={l === value}
+            onClick={() => {
+              tick();
+              onChange(l);
+            }}
+          >
+            <span className="pass-edit-look-dot shape-cookie9" />
+            {capital(tr(TIER_NAME[l]))}
+          </button>
+        ))}
+      </div>
+    </div>
   );
 }

@@ -104,8 +104,8 @@ class _AchievementsRepo:
         """
         now = utcnow_iso()
         await self._conn.execute(
-            "INSERT OR IGNORE INTO accounts (platform, external_id, first_seen_at, updated_at) "
-            "VALUES (?, ?, ?, ?)",
+            "INSERT INTO accounts (platform, external_id, first_seen_at, updated_at) "
+            "VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING",
             (account_platform, external_id, now, now),
         )
 
@@ -130,11 +130,12 @@ class _AchievementsRepo:
             now = utcnow_iso()
             for item in achievements:
                 cursor = await self._conn.execute(
-                    "INSERT OR IGNORE INTO seen_achievements "
+                    "INSERT INTO seen_achievements "
                     "(xuid, title_id, achievement_id, name, description, icon_url, unlocked_at,"
                     " gamerscore, rarity_percent, platform, is_backfill, is_secret, trophy_type,"
                     " trophy_group_id, device, created_at, group_source) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+                    " ON CONFLICT DO NOTHING",
                     (
                         external_id,
                         item.title_id,
@@ -284,9 +285,11 @@ class _AchievementsRepo:
         self, chat_id: int, xuid: str, title_id: str, achievement_id: str, message_id: int | None
     ) -> None:
         await self._conn.execute(
-            "INSERT OR REPLACE INTO publications "
+            "INSERT INTO publications "
             "(chat_id, xuid, title_id, achievement_id, message_id, posted_at) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
+            "VALUES (?, ?, ?, ?, ?, ?)"
+            " ON CONFLICT (chat_id, xuid, title_id, achievement_id) DO UPDATE SET message_id = "
+            "excluded.message_id, posted_at = excluded.posted_at",
             (chat_id, xuid, title_id, achievement_id, message_id, utcnow_iso()),
         )
         await self._conn.commit()

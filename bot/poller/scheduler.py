@@ -32,11 +32,16 @@ from bot.poller.psn_presence import PsnPresencePoller
 from bot.poller.psn_trophy_groups import PsnTrophyGroups
 from bot.poller.rarity_backfill import RarityBackfill
 from bot.poller.reminders import ReminderJob
+from bot.poller.season_reset import SeasonReset
+from bot.poller.season_start import SeasonStart
 from bot.poller.service_health import ServiceHealth
+from bot.poller.stand_in_links import StandInLinks
 from bot.poller.steam_catch_up import SteamCatchUpPoller
 from bot.poller.steam_localization import SteamLocalization
 from bot.poller.steam_presence import SteamPresencePoller
 from bot.poller.title_platforms import TitlePlatformsRefresh
+from bot.poller.translations import Translations
+from bot.services.psn.personal import PsnPersonalAuth
 
 log = logging.getLogger(__name__)
 
@@ -71,6 +76,11 @@ class PollerScheduler:
         patch_refresh: PatchRefresh | None = None,
         guide_videos: GuideVideos | None = None,
         octopus: OctopusWorker | None = None,
+        translations: Translations | None = None,
+        stand_in_links: StandInLinks | None = None,
+        season_reset: SeasonReset | None = None,
+        season_start: SeasonStart | None = None,
+        psn_personal: PsnPersonalAuth | None = None,
     ) -> None:
         self._poller = poller
         self._fetcher = fetcher
@@ -93,9 +103,14 @@ class PollerScheduler:
         self._cover_refresh = cover_refresh
         self._title_platforms = title_platforms
         self._psn_trophy_groups = psn_trophy_groups
+        self._psn_personal = psn_personal
         self._patch_refresh = patch_refresh
         self._guide_videos = guide_videos
         self._octopus = octopus
+        self._translations = translations
+        self._stand_in_links = stand_in_links
+        self._season_reset = season_reset
+        self._season_start = season_start
         self._steam_catch_up = steam_catch_up
         self._scheduler = AsyncIOScheduler(timezone="UTC")
 
@@ -179,6 +194,40 @@ class PollerScheduler:
                 coalesce=True,
                 max_instances=1,
             )
+        if self._season_reset is not None:
+            # TEMPORARY: once, as the second season begins.
+            self._scheduler.add_job(
+                self._season_reset.tick,
+                IntervalTrigger(minutes=10),
+                id="season_reset",
+                coalesce=True,
+                max_instances=1,
+            )
+        if self._stand_in_links is not None:
+            self._scheduler.add_job(
+                self._stand_in_links.tick,
+                IntervalTrigger(seconds=TICK_SECONDS),
+                id="stand_in_links",
+                coalesce=True,
+                max_instances=1,
+            )
+        if self._season_start is not None:
+            self._scheduler.add_job(
+                self._season_start.tick,
+                IntervalTrigger(minutes=10),
+                id="season_start",
+                coalesce=True,
+                max_instances=1,
+            )
+        if self._translations is not None:
+            # One run at a time: a long post takes the model a minute.
+            self._scheduler.add_job(
+                self._translations.tick,
+                IntervalTrigger(seconds=TICK_SECONDS),
+                id="translations",
+                coalesce=True,
+                max_instances=1,
+            )
         if self._guide_videos is not None:
             self._scheduler.add_job(
                 self._guide_videos.tick,
@@ -194,6 +243,15 @@ class PollerScheduler:
             coalesce=True,
             max_instances=1,
         )
+        if self._psn_personal is not None:
+            # Players' own PSN tokens, one request each a day (#233).
+            self._scheduler.add_job(
+                self._psn_personal.check_all,
+                CronTrigger(hour=5, minute=10),
+                id="psn_personal_tokens",
+                coalesce=True,
+                max_instances=1,
+            )
         self._scheduler.add_job(
             self._reminders.run,
             IntervalTrigger(hours=6),

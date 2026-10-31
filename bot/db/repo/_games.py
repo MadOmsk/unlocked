@@ -26,17 +26,17 @@ class _GamesRepo:
             "  v.name, v.name_ru, v.kind, v.developer, v.publisher, v.release_date,"
             "  v.store_group, v.cross_gen_set, v.stand_in, t.name AS list_name,"
             "  v.genres, v.description_en,"
-            "  (SELECT GROUP_CONCAT(h.summary_en, ' ') FROM version_hltb vh JOIN hltb_entries h"
+            "  (SELECT string_agg(h.summary_en, ' ') FROM version_hltb vh JOIN hltb_entries h"
             "   ON h.hltb_id = vh.hltb_id WHERE vh.version_id = v.version_id"
             "   AND vh.source <> 'rejected' AND " + NOT_SPREAD + ") AS hltb_summary,"
             "  t.name_en AS list_name_en,"
-            "  (SELECT GROUP_CONCAT(vh.hltb_id) FROM version_hltb vh"
+            "  (SELECT string_agg(vh.hltb_id::text, ',') FROM version_hltb vh"
             "   WHERE vh.version_id = v.version_id AND vh.source <> 'rejected'"
             "   AND " + NOT_SPREAD + ") AS hltb_ids,"
             "  (SELECT MIN(h.release_year) FROM version_hltb vh JOIN hltb_entries h"
             "   ON h.hltb_id = vh.hltb_id WHERE vh.version_id = v.version_id"
             "   AND vh.source <> 'rejected' AND " + NOT_SPREAD + ") AS hltb_year,"
-            "  (SELECT GROUP_CONCAT(h.game_type) FROM version_hltb vh JOIN hltb_entries h"
+            "  (SELECT string_agg(h.game_type, ',') FROM version_hltb vh JOIN hltb_entries h"
             "   ON h.hltb_id = vh.hltb_id WHERE vh.version_id = v.version_id"
             "   AND vh.source <> 'rejected' AND " + NOT_SPREAD + ") AS hltb_types"
             " FROM versions v LEFT JOIN achievement_list_connectors t ON t.platform = v.platform"
@@ -113,10 +113,10 @@ class _GamesRepo:
         async with self.transaction():
             cursor = await self._conn.execute(
                 "INSERT INTO match_weights (weights, gate_before, gate_after, labels, note,"
-                " created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                " created_at) VALUES (?, ?, ?, ?, ?, ?) RETURNING weights_id",
                 (json.dumps(weights), gate_before, gate_after, labels, note, utcnow_iso()),
             )
-            weights_id = int(cursor.lastrowid)
+            weights_id = int((await cursor.fetchone())[0])
             if activate:
                 await self._activate_match_weights(weights_id)
         return weights_id
@@ -270,9 +270,11 @@ class _GamesRepo:
         self, run: str, question: str, decision: str, value: str, source: str, said: dict
     ) -> None:
         await self._conn.execute(
-            "INSERT OR REPLACE INTO adviser_labels"
+            "INSERT INTO adviser_labels"
             " (run, question, decision, value, source, said, created_at)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?)",
+            " VALUES (?, ?, ?, ?, ?, ?, ?)"
+            " ON CONFLICT (run, question, decision) DO UPDATE SET value = excluded.value, source "
+            "= excluded.source, said = excluded.said, created_at = excluded.created_at",
             (
                 run,
                 question,
@@ -396,18 +398,18 @@ class _GamesRepo:
         now = utcnow_iso()
         cursor = await self._conn.execute(
             "INSERT INTO games (name, year, anchor_version_id, created_at, updated_at)"
-            " VALUES (?, ?, ?, ?, ?)",
+            " VALUES (?, ?, ?, ?, ?) RETURNING game_id",
             (name, year, anchor_version_id, now, now),
         )
         await self._conn.commit()
-        return int(cursor.lastrowid)
+        return int((await cursor.fetchone())[0])
 
     async def rename_game(self, game_id: int, name: str, name_ru: str | None, source: str) -> None:
         """A manual name is never renamed by the matcher."""
         await self._conn.execute(
             "UPDATE games SET name = ?, name_ru = COALESCE(?, name_ru), name_source = ?,"
             " updated_at = ? WHERE game_id = ? AND (name_source = 'auto' OR ? = 'manual')"
-            " AND (name IS NOT ? OR name_source IS NOT ?)",
+            " AND (name IS DISTINCT FROM ? OR name_source IS DISTINCT FROM ?)",
             (name, name_ru, source, utcnow_iso(), game_id, source, name, source),
         )
         await self._conn.commit()
@@ -438,7 +440,7 @@ class _GamesRepo:
         """The linker's word on what each game is; the operator's stands."""
         await self._conn.executemany(
             "UPDATE games SET kind = ?, updated_at = ? WHERE game_id = ?"
-            " AND kind_source = 'auto' AND kind IS NOT ?",
+            " AND kind_source = 'auto' AND kind IS DISTINCT FROM ?",
             [(kind, utcnow_iso(), game_id, kind) for game_id, kind in kinds.items()],
         )
         await self._conn.commit()
@@ -474,7 +476,8 @@ class _GamesRepo:
         # while the version stays in its game.
         await self._conn.executemany(
             "UPDATE versions SET game_id = ?, role = ?, of_version_id = ?, link_p = ?,"
-            " linked_at = CASE WHEN game_id IS ? THEN COALESCE(linked_at, ?) ELSE ? END"
+            " linked_at = CASE WHEN game_id IS NOT DISTINCT FROM ? THEN COALESCE(linked_at, ?)"
+            " ELSE ? END"
             " WHERE version_id = ?",
             [(g, role, of, p, g, now, now, vid) for vid, (g, role, of, p) in members.items()],
         )
@@ -494,9 +497,11 @@ class _GamesRepo:
             )
         now = utcnow_iso()
         await self._conn.executemany(
-            "INSERT OR REPLACE INTO game_relations"
+            "INSERT INTO game_relations"
             " (game_id, related_id, kind, source, created_at, p)"
-            " VALUES (?, ?, ?, ?, ?, ?)",
+            " VALUES (?, ?, ?, ?, ?, ?)"
+            " ON CONFLICT (game_id, related_id, kind) DO UPDATE SET source = excluded.source, "
+            "created_at = excluded.created_at, p = excluded.p",
             [(g, r, kind, source, now, p) for g, r, kind, source, p in relations if g != r],
         )
         await self._conn.commit()
@@ -516,8 +521,11 @@ class _GamesRepo:
             )
         now = utcnow_iso()
         await self._conn.executemany(
-            "INSERT OR REPLACE INTO match_pairs (version_id, other_id, relation, p, probs,"
-            " features, model, scored_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO match_pairs (version_id, other_id, relation, p, probs,"
+            " features, model, scored_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+            " ON CONFLICT (version_id, other_id) DO UPDATE SET relation = excluded.relation, p = "
+            "excluded.p, probs = excluded.probs, features = excluded.features, model = "
+            "excluded.model, scored_at = excluded.scored_at",
             [
                 (s, o, rel, p, json.dumps(probs), json.dumps(feats), model, now)
                 for s, o, rel, p, probs, feats, model in pairs
@@ -595,7 +603,10 @@ class _GamesRepo:
                 " LEFT JOIN hltb_entries h ON h.hltb_id = (SELECT MIN(vh.hltb_id)"
                 "  FROM version_hltb vh WHERE vh.version_id = v.version_id"
                 "  AND vh.source <> 'rejected')"
-                " WHERE v.game_id = ?",
+                # A fixed order: two versions of one year must not trade the
+                # studio from one rebuild to the next.
+                " WHERE v.game_id = ? ORDER BY v.release_date IS NULL, v.release_date,"
+                " v.version_id",
                 (game_id,),
             )
             rows = [dict(row) for row in await cursor.fetchall()]
@@ -613,9 +624,10 @@ class _GamesRepo:
             await self._conn.execute(
                 "UPDATE games SET year = ?, developer = ?, publisher = ?, last_year = ?,"
                 " more_developers = ?, more_publishers = ?, updated_at = ?"
-                " WHERE game_id = ? AND (year IS NOT ? OR developer IS NOT ?"
-                "  OR publisher IS NOT ? OR last_year IS NOT ? OR more_developers IS NOT ?"
-                "  OR more_publishers IS NOT ?)",
+                " WHERE game_id = ? AND (year IS DISTINCT FROM ? OR developer IS DISTINCT FROM ?"
+                "  OR publisher IS DISTINCT FROM ? OR last_year IS DISTINCT FROM ? OR"
+                " more_developers IS DISTINCT FROM ?"
+                "  OR more_publishers IS DISTINCT FROM ?)",
                 (*values, utcnow_iso(), game_id, *values),
             )
         await self._conn.commit()
