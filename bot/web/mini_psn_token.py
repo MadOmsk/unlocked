@@ -17,7 +17,7 @@ from bot.db.repo import Repo
 from bot.poller.psn_fetcher import PsnFetcher
 from bot.services import relink
 from bot.services.psn.auth import STATUS_NOT_CONFIGURED, PsnAuth
-from bot.services.psn.personal import PsnPersonalAuth, PsnTokenError
+from bot.services.psn.personal import PsnPersonalAuth, PsnTokenError, TokenMismatch
 from bot.web.mini_auth import MiniAppUser
 
 log = logging.getLogger(__name__)
@@ -52,6 +52,14 @@ async def handle_token_put(request: web.Request) -> web.Response:
     account_id = str(body.get("account_id") or "").strip()
     try:
         profile = await personal.add(user.person_id, account_id, str(body.get("token") or ""))
+    except TokenMismatch as exc:
+        # The app warns and, on a yes, links it by the token (`link_by_token`).
+        repo: Repo = request.app["mini_repo"]
+        holder = await relink.held_by_other(repo, user.person_id, Platform.PSN, exc.account_id)
+        return web.json_response(
+            {"ok": False, "error": exc.code, "other": exc.online_id, "held": holder is not None},
+            status=400,
+        )
     except PsnTokenError as exc:
         return _refused(exc)
     return web.json_response({"ok": True, "online_id": profile.online_id})

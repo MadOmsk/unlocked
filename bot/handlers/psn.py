@@ -100,6 +100,11 @@ async def disconnect_psn_in_group(message: Message, bot: Bot, i18n: I18nContext)
     await _redirect_to_dm(message, bot, i18n.get("psn-private-only"), i18n)
 
 
+def remember_token_link(tg_id: int, npsso: str) -> None:
+    """What the next "yes" runs: linking by this token (`handlers/psn_token.py`)."""
+    _pending_switch[tg_id] = ("token", npsso)
+
+
 async def prompt_for_link(
     bot: Bot,
     repo: Repo,

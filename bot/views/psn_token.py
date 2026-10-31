@@ -10,15 +10,17 @@ from datetime import date
 from html import escape as html_escape
 
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+from aiogram_i18n import I18nContext
 
 from bot.constants import Platform
 from bot.db.repo import PlatformLink, PsnTokenRow, Repo
-from bot.i18n import translator
+from bot.i18n import StaticI18nContext, translator
 from bot.services.naming import link_nickname
 from bot.services.poll_cadence import load as load_cadence
 from bot.util import humanize_ago, parse_iso
 from bot.views import Screen
 from bot.views.date_picker import format_day_month
+from bot.views.keyboards import switch_keyboard
 
 #: What a token's state reads as on the PSN screen's button.
 TOKEN_MARK = {None: "➕", "active": "✅", "dead": "⚠️"}
@@ -140,12 +142,22 @@ def render_input(name: str | None, account_id: str | None, *, locale: str) -> Sc
     return Screen(text, keyboard([(_("psn-token-cancel"), cancel)]))
 
 
+def render_mismatch(
+    name: str, other: str, *, held: bool, i18n: I18nContext | StaticI18nContext
+) -> Screen:
+    """A token of another account than the one it was pasted for: a warning,
+    and a yes links that account (#169)."""
+    text = i18n.get("psn-token-mismatch", name=html_escape(name), other=html_escape(other))
+    if held:
+        text += "\n\n" + i18n.get("psn-token-mismatch-held", other=html_escape(other))
+    return Screen(text, switch_keyboard("psn", i18n))
+
+
 def render_result(
     code: str,
     *,
     name: str | None,
     account_id: str | None,
-    other: str | None = None,
     locale: str,
 ) -> Screen:
     """What came of a pasted token: `ok`, or a PsnTokenError's code."""
@@ -163,10 +175,9 @@ def render_result(
     text = _(
         f"psn-token-error-{code}",
         name=html_escape(name or ""),
-        other=html_escape(other or ""),
     )
     rows: list[list[tuple[str, str]]] = []
-    if code in ("refused", "mismatch"):
+    if code == "refused":
         rows.append([(_("psn-token-steps-button"), f"psntok:steps:{account_id or 'new'}")])
     rows.append([(_("psn-token-retry-button"), retry)])
     rows.append([(_("psn-token-back"), back)])

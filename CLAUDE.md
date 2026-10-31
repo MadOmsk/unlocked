@@ -513,7 +513,9 @@ tests only: a migration number or a column named below may point there. History:
   outright), Steam's OpenID (`steam/proof.py`), a PSN account's own token. A link or
   a nickname proves nothing, so the bot and the Mini App refuse a held account by
   them (`taken`); a free account still links by them. Whoever loses one is told
-  (`account_taken`, no switch), Telegram or no Telegram.
+  (`account_taken`, no switch), Telegram or no Telegram. A token pasted for another
+  PSN account than it opens is a warning, not a refusal: a yes links the account it
+  opens, saying when somebody loses it.
 - **Unlinking never deletes**: the link is deactivated, the account and its history
   stay, and relinking finds them. `idx_links_one_active_per_platform` allows one
   account per platform per person — **dropping it is all multi-account support

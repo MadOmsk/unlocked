@@ -79,9 +79,17 @@ class TokenTooOften(PsnTokenError):
 
 
 class TokenMismatch(PsnTokenError):
-    """It opens another PSN account than the one it is being added to."""
+    """It opens another PSN account than the one it is being added to. Not a
+    dead end: the token proves that other account is the person's, so the
+    screens warn and offer to link it (#169). Carries the token for that one
+    step; never logged or shown."""
 
     code = "mismatch"
+
+    def __init__(self, online_id: str, account_id: str, npsso: str) -> None:
+        super().__init__(online_id)
+        self.account_id = account_id
+        self.npsso = npsso
 
 
 class TokenNotLinked(PsnTokenError):
@@ -153,7 +161,7 @@ class PsnPersonalAuth:
         npsso, profile = await self.identify(raw, person_id)
         if profile.account_id != account_id:
             log.info("psn token for account %s opens another account", account_id)
-            raise TokenMismatch(profile.online_id)
+            raise TokenMismatch(profile.online_id, profile.account_id, npsso)
         await self.keep(person_id, profile.account_id, npsso)
         return profile
 

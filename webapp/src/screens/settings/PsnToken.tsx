@@ -12,7 +12,6 @@ const SSO_URL = "https://ca.account.sony.com/api/v1/ssocookie";
 const ERRORS: Record<string, TranslationKey> = {
   format: "psnTokenErrFormat",
   refused: "psnTokenErrRefused",
-  mismatch: "psnTokenErrMismatch",
   unavailable: "psnTokenErrUnavailable",
   not_linked: "psnTokenErrNotLinked",
   too_soon: "psnTokenErrTooSoon",
@@ -32,6 +31,7 @@ export function PsnTokenPage({ accountId, onClose, layer }: { accountId: string 
   const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
   const [asking, setAsking] = useState(false);
+  const [mismatch, setMismatch] = useState<{ other: string; held: boolean } | null>(null);
   const state = account?.token ?? null;
   const showForm = !accountId || !state || editing || state === "dead";
 
@@ -52,9 +52,29 @@ export function PsnTokenPage({ accountId, onClose, layer }: { accountId: string 
       if (!accountId) onClose();
     } catch (err) {
       const code = err instanceof ApiError ? err.code : "";
+      if (err instanceof ApiError && code === "mismatch") {
+        setMismatch({ other: String(err.body.other ?? ""), held: err.body.held === true });
+        return;
+      }
       const key = ERRORS[code];
-      const other = err instanceof ApiError ? String(err.body.other ?? "") : "";
-      setError(key ? tr(key).replace("{other}", other) : errorText(err, locale));
+      setError(key ? tr(key) : errorText(err, locale));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // The token proves the other account is this person's: a yes links it.
+  const linkOther = async () => {
+    setMismatch(null);
+    setBusy(true);
+    try {
+      await userApi.connectPsnByToken(data, value);
+      toast(tr("psnTokenLinked"));
+      await reloadMe();
+      onClose();
+    } catch (err) {
+      const key = err instanceof ApiError ? ERRORS[err.code] : undefined;
+      setError(key ? tr(key) : errorText(err, locale));
     } finally {
       setBusy(false);
     }
@@ -147,6 +167,19 @@ export function PsnTokenPage({ accountId, onClose, layer }: { accountId: string 
             </Button>
           </form>
         </>
+      )}
+
+      {mismatch && (
+        <Confirm
+          text={[tr("psnTokenMismatchAsk"), mismatch.held ? tr("psnTokenMismatchHeld") : ""]
+            .filter(Boolean)
+            .join("\n")
+            .replaceAll("{other}", mismatch.other)}
+          yes={tr("psnTokenLink")}
+          no={tr("cancel")}
+          onYes={() => void linkOther()}
+          onNo={() => setMismatch(null)}
+        />
       )}
 
       {asking && (

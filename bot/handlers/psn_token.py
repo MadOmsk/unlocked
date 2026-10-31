@@ -23,11 +23,13 @@ from bot.constants import MAX_PSN_ACCOUNTS, Platform
 from bot.db.repo import Repo
 from bot.handlers import awaiting
 from bot.handlers.delivery import safe_edit
+from bot.handlers.psn import remember_token_link
 from bot.i18n import StaticI18nContext
 from bot.poller.psn_fetcher import PsnFetcher
+from bot.services import relink
 from bot.services.naming import link_nickname
 from bot.services.psn.auth import STATUS_NOT_CONFIGURED, PsnAuth
-from bot.services.psn.personal import PsnTokenError
+from bot.services.psn.personal import PsnTokenError, TokenMismatch
 from bot.views import Screen
 from bot.views.panel import render_account_menu, render_panel
 from bot.views.psn_token import (
@@ -35,6 +37,7 @@ from bot.views.psn_token import (
     render_delete_confirm,
     render_deleted,
     render_input,
+    render_mismatch,
     render_result,
     render_steps,
     render_token,
@@ -213,13 +216,22 @@ async def token_pasted(
     name = await _name(repo, person, target)
     try:
         await psn_auth.personal.add(person, target, raw)
+    except TokenMismatch as exc:
+        # A warning, not a dead end: the token proves that other account is
+        # this person's (#169). A yes links it, as any token linked (`psn:switch`).
+        remember_token_link(tg_id, exc.npsso)
+        holder = await relink.held_by_other(repo, person, Platform.PSN, exc.account_id)
+        await _answer(
+            bot,
+            tg_id,
+            render_mismatch(name or "", exc.online_id or "", held=holder is not None, i18n=i18n),
+        )
+        return
     except PsnTokenError as exc:
         await _answer(
             bot,
             tg_id,
-            render_result(
-                exc.code, name=name, account_id=target, other=exc.online_id, locale=i18n.locale
-            ),
+            render_result(exc.code, name=name, account_id=target, locale=i18n.locale),
         )
         return
     await _answer(bot, tg_id, render_result("ok", name=name, account_id=target, locale=i18n.locale))

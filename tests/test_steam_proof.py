@@ -13,6 +13,7 @@ from aiohttp.test_utils import TestClient, TestServer
 
 from bot.constants import Platform
 from bot.db.repo import Repo
+from bot.i18n import static_i18n
 from bot.services import relink
 from bot.services.crypto import TokenCipher
 from bot.services.psn.auth import PsnAuth
@@ -21,6 +22,7 @@ from bot.services.steam import proof as proof_module
 from bot.services.steam.auth import SteamAuth
 from bot.services.steam.client import SteamProfile
 from bot.services.steam.proof import OPENID_URL, SteamProof, SteamProofError, verified_steam_id
+from bot.views.psn_token import render_mismatch
 from bot.web import mini_steam
 from bot.web.mini_auth import MiniAppUser
 
@@ -321,3 +323,12 @@ async def test_the_return_page_links_and_words_a_refusal(
     finally:
         await client.close()
     assert await repo.account_holder(Platform.STEAM, STEAM_ID) == person
+
+
+@pytest.mark.parametrize("held", [False, True])
+def test_a_token_of_another_account_warns_and_offers_it(held: bool) -> None:
+    screen = render_mismatch("Mine", "Theirs", held=held, i18n=static_i18n("psn", "en"))
+    assert "Theirs" in screen.text
+    assert ("will lose it" in screen.text) is held
+    buttons = [b.callback_data for row in screen.keyboard.inline_keyboard for b in row]
+    assert buttons == ["psn:switch:yes", "psn:switch:no"]

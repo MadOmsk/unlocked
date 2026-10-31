@@ -74,7 +74,12 @@ async def test_add_refuse_and_remove(repo: Repo, sony, monkeypatch) -> None:
     try:
         wrong = await client.put("/api/mini/psn/token", json={"account_id": "111", "token": OTHER})
         assert wrong.status == 400
-        assert await wrong.json() == {"ok": False, "error": "mismatch", "other": "Them"}
+        assert await wrong.json() == {
+            "ok": False,
+            "error": "mismatch",
+            "other": "Them",
+            "held": False,
+        }
         bad = await client.put("/api/mini/psn/token", json={"account_id": "111", "token": "x"})
         assert (await bad.json())["error"] == "format"
         ok = await client.put("/api/mini/psn/token", json={"account_id": "111", "token": GOOD})
