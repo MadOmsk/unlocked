@@ -1873,7 +1873,7 @@ elsewhere in this file still describe the bot.
   cookie (`_require_user`); a *bad* Init Data header is never rescued by it. CORS
   never allows credentials, so only the same origin carries the cookie. `POST
   /api/mini/auth/logout` ends it. **Setup per bot**: BotFather `/setdomain` must name
-  the Mini App's host (`xbox.sultanpharm.com`, `test.xbox.sultanpharm.com`, and the
+  the Mini App's host (`unlocked.how`, `test.unlocked.how`, and the
   dev tunnel) or the widget refuses to render. A session resolves to the person
   (`repo.session_person`), who may have no Telegram id (`MiniAppUser.tg_id` is then
   None and the Telegram corners — chats, publishing — are empty).
@@ -3072,8 +3072,7 @@ week-long soak — the code moves in one step on `feature/postgres`, is checked 
 copy of production and on the dev server, then both servers switch. **Both are on
 PostgreSQL 16 (the VPS, localhost): the test server since 2026-10-31, production
 since 2026-10-31 15:31 UTC, as 0.3.0.** What is left is the clean-up in #234, after
-the rollback window (until 2026-11-02 15:31 UTC). `unlocked.how` (#237) and the
-rest of the new bot's move (#238) come after it.
+the rollback window (until 2026-11-02 15:31 UTC).
 
 **Scripts open PostgreSQL through `bot/db/tools.py`** (the bot's dialect and rows,
 no bring-up): `--schema` in place of `--db`, default `DATABASE_SCHEMA`; an async
@@ -3179,7 +3178,7 @@ journalctl -u xbox-bot -f
 | checkout | `/opt/xbox_achievement_bot` | `/opt/xbox_bot_test` |
 | env / schema | `.env` · `prod` | `.env.test` · `test` |
 | branch | `main` | `prerelease` |
-| Mini App | `xbox.sultanpharm.com/app/` | `test.xbox.sultanpharm.com/app/` |
+| Mini App | `unlocked.how/app/` | `test.unlocked.how/app/` |
 | SPA files | `/var/www/xbox-mini` | `/var/www/xbox-mini-test` |
 
 - **Each server has its own hostname** because the SPA calls `/api/mini/*` by absolute
@@ -3187,6 +3186,10 @@ journalctl -u xbox-bot -f
   so the two cannot cross.
 - The test server's OAuth callback stays on the prod host at `/auth/callback-test`
   (the redirect URL Microsoft already has).
+- **The old hosts `xbox.sultanpharm.com` and `test.xbox.sultanpharm.com` only
+  redirect `/app` to the new ones** (#237); their API and callbacks still answer.
+  The replaced bot's signature is not accepted (`LEGACY_BOT_TOKENS` unset; owner,
+  2026-10-31: its posts' buttons are not needed).
 - **Never run git on the server as root** — the deploy runs as `botsvc`, and
   root-owned files in a checkout break it. Use `sudo -u botsvc git …`, or better, CI.
 
